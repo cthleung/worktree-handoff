@@ -408,5 +408,24 @@ class TwoComputers(unittest.TestCase):
         self.assertIn("run.stopped", log.read_text())
 
 
+    # ------------------------------------------------------------ the computer's name
+
+    def test_host_name_is_picked_once_and_kept(self):
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(home)
+        env = clean_env(HOME=home, USERPROFILE=home, XDG_CONFIG_HOME=home,
+                        WORKTREE_HANDOFF_LOG=self.log_file("mac"))
+        self.write("mac", "src/one.txt", "one mac\n")
+        r = subprocess.run([sys.executable, "-I", SCRIPT, "end"], cwd=self.dirs["mac"],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        kept = subprocess.run(["git", "config", "--global", "worktree-handoff.host"],
+                              capture_output=True, text=True, env=env).stdout.strip()
+        self.assertTrue(kept)
+        self.assertNotIn(".", kept)
+        made = [json.loads(l) for l in open(self.log_file("mac"), encoding="utf-8")]
+        self.assertTrue(any(e.get("host") == kept for e in made))
+
+
 if __name__ == "__main__":
     unittest.main()
