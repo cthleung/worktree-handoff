@@ -1,0 +1,3 @@
+# bash reads these on Windows too (Git Bash), so keep Unix line endings
+*.sh text eol=lf
+bin/* text eol=lf

@@ -1,0 +1,12 @@
+{
+  "name": "worktree-handoff",
+  "description": "Carry uncommitted work between computers",
+  "owner": { "name": "cthleung" },
+  "plugins": [
+    {
+      "name": "worktree-handoff",
+      "source": "./",
+      "description": "Carries uncommitted work between computers through a hidden git ref"
+    }
+  ]
+}

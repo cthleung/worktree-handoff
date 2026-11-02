@@ -1,0 +1,7 @@
+#!/bin/bash
+# `worktree-handoff status|unwrap [--force]|drop|start|end` from any shell. While the
+# plugin is enabled, Claude Code puts this folder on the Bash tool's PATH.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for PY in python3 python py; do "$PY" -c "" </dev/null >/dev/null 2>&1 && break; PY=; done
+[ -n "$PY" ] || { echo "worktree-handoff: no python found" >&2; exit 1; }
+exec "$PY" "$HERE/../scripts/worktree_handoff.py" "$@"
