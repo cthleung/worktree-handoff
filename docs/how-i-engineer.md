@@ -147,7 +147,7 @@ The [design notes](design.md) give every decision its trade-off, and honestly th
 
 - **No dependencies:** It needs Python 3.10+ and git, and that's it. A plugin that has to pip install on every machine is a plugin that fails on the 1 machine where pip is broken, and I've been that machine.
 - **Plain git underneath:** A hidden ref, a scratch index and `git apply` are all stock git, so if the tool ever disappears, everything it left behind still makes sense to someone who knows git.
-- **Small PRs:** Each of the 5 is reviewable in 1 sitting, with its reasoning in the build log right next to the diff. That's how I work at my day job too, several small PRs a day when the work allows, because a change I can review in 1 sitting is a change I'd want to inherit.
+- **Small PRs:** I'm the only maintainer, so I merge my own, which makes CI the reviewer that can say no. Each one's reviewable in 1 sitting, with its reasoning in the build log right next to the diff. That's how I work at my day job too, several small PRs a day when the work allows, because a change I can review in 1 sitting is a change I'd want to inherit.
 
 ## 9. Working with a coding agent
 
@@ -181,5 +181,6 @@ These aren't habits I put on for a portfolio, either. Back in 2023, I was one of
 ## What I'd do next
 
 - **Strict mypy:** It runs in its default mode right now, and a lot of the `log` parameters are still untyped (I know, I know). Strict mode would catch more, and it's the next PR I'd write.
+- **Bundle order without clocks:** One check compares times from my 2 computers, which is fine while their clocks agree (the [design notes](design.md#which-bundle-is-newer-2-clocks) cover it). Recording which remote bundle each computer last saw would take the clocks out of it.
 - **Two people on one branch:** The tool stops and asks when 2 computers both have unsent edits, which is right for 1 person, but it's too cautious for a team. It's doable, but supporting it properly would mean real merge logic, and I'd want a design note before a line of code.
 - **A tagged release:** The changelog already says 0.1.0. The tag and the GitHub release are just waiting on me.

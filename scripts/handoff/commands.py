@@ -306,7 +306,7 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
         ok, msg = g.apply(patch, "--3way")
         if not ok:
             unmerged = g.run("diff", "--name-only", "--diff-filter=U").splitlines()
-            g.run("reset", "-q")  # --3way stages what it merged; keep the index as it was
+            g.run("reset", "-q")  # --3way stages what it merged; reset to HEAD so nothing's left staged
             g.save_state(applied=remote["commit"], sent_tree=None)
             log.error("unwrap.conflict_markers", how=how, note=note,
                       error=msg.splitlines()[-1] if msg else "", files_with_markers=unmerged,

@@ -9,7 +9,7 @@ Move between computers mid-task without committing unfinished work.
 
 worktree-handoff is a [Claude Code](https://code.claude.com) plugin. It carries your **uncommitted** work (edited files, new files, deletions) from one machine to another through a hidden git ref. Close a chat on your laptop, open one on your desktop, and the desktop's working tree has your edits as plain uncommitted changes, exactly where you left them.
 
-- It never commits to your branch, never stages anything and never touches `.git/index`. Your editor's "changes since the last commit" view stays exactly as it was.
+- It never commits to your branch and never leaves anything staged. Bundles are built in a scratch index, never `.git/index`, so your editor's "changes since the last commit" view stays as it was while you work.
 - It needs no server, no sync service and no setup beyond the git remote you already push to.
 
 ## What it looks like
