@@ -1,5 +1,6 @@
 #!/bin/bash
-# Hook entry point for Claude Code. The logic lives in worktree_handoff.py.
+# Hook entry point for Claude Code. It runs worktree_handoff.py, and the logic lives in the
+# handoff package next to it.
 #
 #   hook.sh start  (SessionStart)  foreground, so unwrapped files are there before the agent
 #                                  reads anything; its stdout goes into the agent's context

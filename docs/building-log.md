@@ -33,3 +33,17 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **No real-looking secrets in the source.** The guard's tests need strings shaped like AWS and GitHub tokens, and a public repo with those in it gets flagged by secret scanning. So the tests build them from pieces at runtime (`"gh" + "p_" + "a" * 36`), and the file itself never contains one.
 
 **How I know it works.** 44 tests pass (30 end to end plus 14 unit), lint and types are still clean, and the coverage job reports 83% with the floor at 80.
+
+## 3. Splitting 1 big file into a small package
+
+**What was wrong.** `worktree_handoff.py` did everything in 964 lines: settings, the secrets guard, the computer's name, logging, git plumbing and the 5 commands. It worked, and the tests proved it, but finding anything meant scrolling, and a reviewer couldn't tell at a glance which parts touch git and which don't.
+
+**What I did.** It's now a package, `scripts/handoff/`, with 1 module per job: `config`, `guard`, `host`, `log`, `gitops`, `commands` and `cli`. The package's `__init__.py` lists them in the order a run touches them. `scripts/worktree_handoff.py` is still there as a 13-line entry point, because the hooks, the `bin/` wrapper and the tests all run that exact path.
+
+**Decisions worth a note.**
+- **No behavior change, and I can prove it.** I didn't move the code by hand. A small script sliced the old file along its own syntax tree, so every function body moved byte for byte, and worked out each module's imports from what its code actually uses. Afterward, all 41 functions, classes and constants on `main` matched their new copies exactly when I compared the 2 syntax trees, and `--help` printed the same text.
+- **The 30 end-to-end tests didn't change at all.** They run the real entry point against real git, so them passing untouched is what says the refactor is safe. Only the unit tests moved their imports, since they reach into the modules on purpose.
+- **The entry path stays put.** My own 2 computers auto-update this plugin from `main`, and their hooks run `scripts/worktree_handoff.py`. Moving that file would've broken my own setup the moment this merged.
+- **Coverage got more useful for free.** It's reported per module now, which shows the gap is where I said it was in PR 2: `host.py` is at 66% because that's where the Windows-only code lives.
+
+**How I know it works.** All 44 tests pass on Linux, macOS and Windows, lint and types are clean across the 9 files, coverage is 84%, and the hook script still exits quietly outside a repo.
