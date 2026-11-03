@@ -78,3 +78,16 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **No coverage badge.** A badge needs a hosted service or a number that goes stale the moment I forget to update it, and the coverage job already prints the real figure on every run.
 
 **How I know it works.** Every link resolves, the capture came from the current code on `main`, and CI's green on all 3 systems.
+
+## 6. A page on how I engineer
+
+**What was wrong.** The build log says what each PR did and the design notes say why each decision was made, but neither one says much about the engineer who made them. A reviewer had to read both and piece that together, which is honestly a lot to ask from someone with 10 tabs open.
+
+**What I did.** I wrote `docs/how-i-engineer.md`, 1 page that steps back from both. It tells where the tool came from, then goes through the habits I'd stand behind (I'm the first user, it stops instead of guessing, logs for 2 readers, real tests first, modules pointing 1 way, proven refactors, the bug in the design notes, boring dependencies), each with a diagram or a link to the code that backs it up. The README links to it from "How this is built."
+
+**Decisions worth a note.**
+- **Mermaid, not images.** GitHub draws Mermaid diagrams from text, so they live in the diff and follow the reader's light or dark theme. They also can't go stale without someone seeing the change, which I'd say is the real win.
+- **The diagrams come from the code.** The decision chart follows `decide()` branch by branch, and the module graph is drawn from each module's real imports. While checking it, I found my first draft had put the lock in the wrong module and forgot that `host.py` calls git for the computer's name (oops), so both got fixed before this went up.
+- **It ends on what's missing.** Strict mypy, 2 people on one branch and the tagged release are all named, since a page that only lists strengths is, let's be real, a page nobody believes.
+
+**How I know it works.** All 6 diagrams parsed and rendered with Mermaid 11 in a headless browser before the push, every link resolves, and the code's untouched, so CI should just come back green on all 3 systems.
