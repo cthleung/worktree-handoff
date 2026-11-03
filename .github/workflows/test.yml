@@ -1,5 +1,8 @@
 name: tests
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -13,6 +16,25 @@ jobs:
         run: ruff check scripts tests
       - name: mypy (types)
         run: mypy
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install coverage==7.17.0
+      - name: git identity for the test clones
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+          git config --global init.defaultBranch main
+      - name: run every test under coverage, subprocesses included
+        run: |
+          coverage run -m unittest
+          coverage combine
+          coverage report --fail-under=80
+          coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
   test:
     strategy:
       fail-fast: false
