@@ -41,6 +41,7 @@ agent should act on are printed there; `status` prints everything.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import json
 import os
@@ -53,6 +54,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 REF_PREFIX = "refs/worktree-handoff/"
 BACKUP_PREFIX = "refs/worktree-handoff-backup/"
@@ -161,7 +163,7 @@ def _lock_owner(lock: Path):
 
 
 def pid_alive(pid: int) -> bool:
-    if os.name == "nt":
+    if sys.platform == "win32":
         # os.kill(pid, 0) would terminate the process on Windows, so ask the kernel.
         import ctypes
         k = ctypes.windll.kernel32
@@ -182,7 +184,7 @@ def pid_alive(pid: int) -> bool:
 
 
 def summarize(changes: list[dict]) -> dict:
-    by = {"A": [], "M": [], "D": []}
+    by: dict[str, list[str]] = {"A": [], "M": [], "D": []}
     for c in changes:
         by.setdefault(c["status"], []).append(c["path"])
     return {"added": by["A"], "modified": by["M"], "deleted": by["D"], "count": len(changes)}
@@ -268,11 +270,9 @@ class Git:
         cfg = dict(DEFAULTS)
         f = self.root / CONFIG_FILE
         if f.exists():
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 cfg.update({k: v for k, v in json.loads(f.read_text(encoding="utf-8")).items()
                             if k in DEFAULTS})
-            except (OSError, ValueError):
-                pass
         local = self.run("config", "--get", "worktree-handoff.enabled", check=False)
         if local.lower() in ("false", "no", "off", "0"):
             cfg["enabled"] = False
@@ -285,8 +285,8 @@ class Git:
         try:
             out = subprocess.run(["git", *args], cwd=self.root, capture_output=True,
                                  text=True, timeout=timeout, env=full_env, input=input)
-        except subprocess.TimeoutExpired:
-            raise GitError(f"git {' '.join(args[:2])} timed out after {timeout}s")
+        except subprocess.TimeoutExpired as e:
+            raise GitError(f"git {' '.join(args[:2])} timed out after {timeout}s") from e
         if check and out.returncode:
             raise GitError((out.stderr or out.stdout).strip() or f"git {args[0]} failed")
         return out.stdout.strip()
@@ -352,7 +352,8 @@ class Git:
         out = self.run("diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD", env=e)
         parts = out.split("\0")
         held = []
-        for status, path in zip(parts[0::2], parts[1::2]):
+        # -z output ends with a NUL, so the last field is empty and the 2 slices can differ by 1
+        for status, path in zip(parts[0::2], parts[1::2], strict=False):
             status = status[:1]
             if status not in ("A", "M") or path in allow:
                 continue
@@ -380,8 +381,8 @@ class Git:
                 hit = secret_hit(data.decode("utf-8", "replace"))
             else:
                 added = self.run("diff", "--cached", "-U0", "HEAD", "--", path, env=e, check=False)
-                hit = secret_hit("\n".join(l for l in added.splitlines()
-                                           if l.startswith("+") and not l.startswith("+++")))
+                hit = secret_hit("\n".join(line for line in added.splitlines()
+                                           if line.startswith("+") and not line.startswith("+++")))
             if hit:
                 held.append({"path": path, "status": status, "why": f"content matches {hit}"})
         return held
@@ -389,7 +390,9 @@ class Git:
     def changes(self, tree_a, tree_b) -> list[dict]:
         out = self.run("diff", "--name-status", "--no-renames", "-z", tree_a, tree_b)
         parts = out.split("\0")
-        return [{"status": s[:1], "path": p} for s, p in zip(parts[0::2], parts[1::2]) if s]
+        # -z output ends with a NUL, so the slices can differ by 1 (see _guard)
+        return [{"status": s[:1], "path": p}
+                for s, p in zip(parts[0::2], parts[1::2], strict=False) if s]
 
     def shortstat(self, tree_a, tree_b) -> dict:
         return {"shortstat": self.run("diff", "--shortstat", tree_a, tree_b).strip()}
@@ -425,7 +428,8 @@ class Git:
     def revert_to_head(self, cur_tree) -> str:
         """Put the working tree back to HEAD, keeping a backup ref of what it held."""
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup = self.commit_tree(cur_tree, self.head(), f"worktree-handoff backup of {host_name()} at {stamp}")
+        backup = self.commit_tree(cur_tree, self.head(),
+                                  f"worktree-handoff backup of {host_name()} at {stamp}")
         name = f"{BACKUP_PREFIX}{stamp}"
         self.run("update-ref", name, backup)
         ok, msg = self.apply(self.patch(cur_tree, self.head_tree()))
@@ -658,7 +662,7 @@ def decide(g: Git, log) -> dict:
     state = g.load_state()
     dirty = g.changes(head_tree, cur)
     log = log.bind(head=head[:10], branch=g.branch())
-    plan = {"action": "nothing", "cur": cur, "head": head, "head_tree": head_tree,
+    plan: dict[str, Any] = {"action": "nothing", "cur": cur, "head": head, "head_tree": head_tree,
             "dirty": summarize(dirty), "state": state, "held": held}
 
     log.info("tree.dirty" if dirty else "tree.clean", **(plan["dirty"] if dirty else {}))
@@ -703,7 +707,8 @@ def decide(g: Git, log) -> dict:
 
 def cmd_start(g: Git, log) -> int:
     plan = decide(g, log)
-    action, remote, state = plan["action"], plan.get("remote"), plan["state"]
+    # decide() always sets "remote"; it's None only for pull_only and push_ours
+    action, remote, state = plan["action"], plan["remote"], plan["state"]
     cur = plan["cur"]
 
     if action == "pull_only":
@@ -901,7 +906,8 @@ def main(argv) -> int:
         return 0
     if not g.config["enabled"]:
         if by_hand:
-            print(f"worktree-handoff: off for this repo ({CONFIG_FILE} or git config worktree-handoff.enabled)")
+            print(f"worktree-handoff: off for this repo "
+                  f"({CONFIG_FILE} or git config worktree-handoff.enabled)")
         return 0
     if command == "tick" and not g.tick_due():
         return 0

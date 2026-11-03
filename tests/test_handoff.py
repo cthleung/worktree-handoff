@@ -423,7 +423,8 @@ class TwoComputers(unittest.TestCase):
                               capture_output=True, text=True, env=env).stdout.strip()
         self.assertTrue(kept)
         self.assertNotIn(".", kept)
-        made = [json.loads(l) for l in open(self.log_file("mac"), encoding="utf-8")]
+        with open(self.log_file("mac"), encoding="utf-8") as f:
+            made = [json.loads(line) for line in f]
         self.assertTrue(any(e.get("host") == kept for e in made))
 
 
