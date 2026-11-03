@@ -11,6 +11,7 @@ I write a long novel with AI help, usually with several chats open in the same f
 It started life inside the novel's own repo, and it broke on my real machines a few times that first day, which is honestly where most of its safety rules come from (I wasn't planning on writing any). Once it held up, I moved it out into a plugin, and the next day I went back over it as if I were handing it to a team.
 
 ```mermaid
+%%{init: {"themeVariables": {"cScale0": "#F2A766", "cScaleLabel0": "#122123", "cScale1": "#93C1BB", "cScaleLabel1": "#122123"}}}%%
 timeline
     title From a hook in my novel's repo to a plugin
     2 Nov 2026 : A hook that bundles unfinished work into a hidden ref
