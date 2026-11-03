@@ -1,11 +1,39 @@
 # worktree-handoff
 
-Move between computers mid-task without committing half-done work.
+[![tests](https://github.com/cthleung/worktree-handoff/actions/workflows/test.yml/badge.svg)](https://github.com/cthleung/worktree-handoff/actions/workflows/test.yml)
+![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
+![dependencies](https://img.shields.io/badge/dependencies-none-2ea44f)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+Move between computers mid-task without committing unfinished work.
 
 worktree-handoff is a [Claude Code](https://code.claude.com) plugin. It carries your **uncommitted** work (edited files, new files, deletions) from one machine to another through a hidden git ref. Close a chat on your laptop, open one on your desktop, and the desktop's working tree has your edits as plain uncommitted changes, exactly where you left them.
 
 - It never commits to your branch, never stages anything and never touches `.git/index`. Your editor's "changes since the last commit" view stays exactly as it was.
 - It needs no server, no sync service and no setup beyond the git remote you already push to.
+
+## What it looks like
+
+A real run between 2 throwaway clones (the log line is wrapped for width):
+
+```console
+# on the laptop: the chat closes, the bundle is pushed, nothing is printed
+$ worktree-handoff end
+
+# on the desktop: a chat opens
+$ worktree-handoff start
+worktree-handoff: 2026-11-03 03:23:51 [info] handoff.unwrapped  from_host=laptop host=desktop
+    added=['ideas.md'] modified=['notes.md'] shortstat='2 files changed, 2 insertions(+)'
+    how='plain apply (bundle parent is HEAD)'
+    agent='These files are now uncommitted edits in the working tree, carried over from the
+           other computer. Tell the user which files came over.'
+
+$ git status --short
+ M notes.md
+?? ideas.md
+```
+
+The `agent` field is for the coding agent reading the session's startup context. It tells the agent what to say, so the person hears "2 files came over from your laptop" instead of reading a log.
 
 ## How it works
 
@@ -104,7 +132,18 @@ The log is JSON lines in `.git/worktree-handoff/handoff.log`, one event per line
 python -m unittest
 ```
 
-The tests run two throwaway clones against a local bare repo standing in for GitHub, and cover the cases in the safety table: the tree and index left alone, conflicts, 3-way applies, markers, backups, branches, opting out, the secrets guard, a remote that refuses pushes, the heartbeat and the lock. CI runs them on Linux, macOS and Windows.
+44 tests in 2 layers:
+
+- **30 end-to-end tests** run 2 throwaway clones against a local bare repo standing in for GitHub, and cover the cases in the safety table: the tree and index left alone, conflicts, 3-way applies, markers, backups, branches, opting out, the secrets guard, a remote that refuses pushes, the heartbeat and the lock.
+- **14 unit tests** cover the pure pieces (the secrets guard, the log, the pid check) in well under a second.
+
+CI runs ruff and mypy, runs every test on Linux, macOS and Windows, and measures coverage inside the end-to-end subprocesses too (84%, with an 80% floor).
+
+## How this is built
+
+This repo doubles as a record of how I work. Every change lands as a small pull request with green CI, and each one has an entry in the [build log](docs/building-log.md) saying what was wrong, what I decided and why, and how I know it works. The reasons behind the safety table are in the [design notes](docs/design.md), and releases are in the [changelog](CHANGELOG.md).
+
+The code is a small standard-library package, `scripts/handoff/`, with 1 module per job (settings, the secrets guard, the computer's name, the log, the git plumbing, the commands and the CLI). `scripts/worktree_handoff.py` is the entry point the hooks run.
 
 ## Limits
 
