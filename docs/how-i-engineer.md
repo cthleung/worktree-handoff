@@ -6,7 +6,7 @@ If you want the bigger picture (the novel this came out of, and my day job build
 
 ## Where it came from
 
-I write a long novel with AI help, usually with several chats open in the same folder, and I switch between a Mac and a Windows PC. Unfinished work kept getting stuck on whichever computer I'd left it on, but committing unfinished drafts just to move them felt wrong, since a commit's supposed to mean "this is ready." So I wrote a hook that carries the unfinished work across instead.
+I write a long novel in VSCode with agentic AI tools (Claude Code/Github Copilot), usually with several chats open in the same folder, and I switch between a Mac and a Windows PC. Unfinished work kept getting stuck on whichever computer I'd left it on, but committing unfinished drafts just to move them felt wrong, since a commit's supposed to mean "this is ready." So I wrote a hook that carries the unfinished work across instead.
 
 It started life inside the novel's own repo, and it broke on my real machines a few times that first day, which is honestly where most of its safety rules come from (I wasn't planning on writing any). Once it held up, I moved it out into a plugin, and the next day I went back over it as if I were handing it to a team.
 
