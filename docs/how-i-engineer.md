@@ -145,9 +145,9 @@ The [design notes](design.md) give every decision its trade-off, and honestly th
 
 ## 8. Boring on purpose
 
-- **No dependencies.** It needs Python 3.10+ and git, and that's it. A plugin that has to pip install on every machine is a plugin that fails on the 1 machine where pip is broken, and I've been that machine.
-- **Plain git underneath.** A hidden ref, a scratch index and `git apply` are all stock git, so if the tool ever disappears, everything it left behind still makes sense to someone who knows git.
-- **Small PRs.** Each of the 5 is reviewable in 1 sitting, with its reasoning in the build log right next to the diff. That's how I work at my day job too, several small PRs a day when the work allows, because a change I can review in 1 sitting is a change I'd want to inherit.
+- **No dependencies:** It needs Python 3.10+ and git, and that's it. A plugin that has to pip install on every machine is a plugin that fails on the 1 machine where pip is broken, and I've been that machine.
+- **Plain git underneath:** A hidden ref, a scratch index and `git apply` are all stock git, so if the tool ever disappears, everything it left behind still makes sense to someone who knows git.
+- **Small PRs:** Each of the 5 is reviewable in 1 sitting, with its reasoning in the build log right next to the diff. That's how I work at my day job too, several small PRs a day when the work allows, because a change I can review in 1 sitting is a change I'd want to inherit.
 
 ## 9. Working with a coding agent
 
@@ -167,10 +167,10 @@ flowchart LR
 
 So most of my job on a repo like this is the part the rest of this page is about, which is saying what done means and then checking whether it really is. A few places where the checking paid off:
 
-- **The obvious fix would've crashed.** Ruff asked for an explicit `strict=` on a `zip()`, and `strict=True` is the textbook answer. Here it'd fail on every run, because git's `-z` output always ends in 1 extra empty field, and the end-to-end tests are what would've caught it.
-- **The refactor got proof instead of trust.** An agent can move 964 lines and get nearly all of it right, and "nearly" is the problem, which is why PR 3 compared the syntax trees and left the end-to-end tests untouched.
-- **The diagrams on this page were wrong at first.** The first draft had the lock in the wrong module and missed that `host.py` calls git, and drawing the graph from the real imports caught both before it went up.
-- **Real use caught what the tests couldn't.** The hotspot bug, the killed run that blocked the next one and the chats that never closed all came from me using it, and each one turned into a fix and a test.
+- **The obvious fix would've crashed:** Ruff asked for an explicit `strict=` on a `zip()`, and `strict=True` is the textbook answer. Here it'd fail on every run, because git's `-z` output always ends in 1 extra empty field, and the end-to-end tests are what would've caught it.
+- **The refactor got proof instead of trust:** An agent can move 964 lines and get nearly all of it right, and "nearly" is the problem, which is why PR 3 compared the syntax trees and left the end-to-end tests untouched.
+- **The diagrams on this page were wrong at first:** The first draft had the lock in the wrong module and missed that `host.py` calls git, and drawing the graph from the real imports caught both before it went up.
+- **Real use caught what the tests couldn't:** The hotspot bug, the killed run that blocked the next one and the chats that never closed all came from me using it, and each one turned into a fix and a test.
 
 I think that's the useful part for anyone building agents for other people. I've spent a lot of time on the user's side of an agent that misreads what I want, and this page is mostly what I do about it.
 
@@ -180,6 +180,6 @@ These aren't habits I put on for a portfolio, either. Back in 2023, I was one of
 
 ## What I'd do next
 
-- **Strict mypy.** It runs in its default mode right now, and a lot of the `log` parameters are still untyped (I know, I know). Strict mode would catch more, and it's the next PR I'd write.
-- **Two people on one branch.** The tool stops and asks when 2 computers both have unsent edits, which is right for 1 person, but it's too cautious for a team. It's doable, but supporting it properly would mean real merge logic, and I'd want a design note before a line of code.
-- **A tagged release.** The changelog already says 0.1.0. The tag and the GitHub release are just waiting on me.
+- **Strict mypy:** It runs in its default mode right now, and a lot of the `log` parameters are still untyped (I know, I know). Strict mode would catch more, and it's the next PR I'd write.
+- **Two people on one branch:** The tool stops and asks when 2 computers both have unsent edits, which is right for 1 person, but it's too cautious for a team. It's doable, but supporting it properly would mean real merge logic, and I'd want a design note before a line of code.
+- **A tagged release:** The changelog already says 0.1.0. The tag and the GitHub release are just waiting on me.
