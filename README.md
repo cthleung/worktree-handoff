@@ -52,8 +52,8 @@ The `agent` field is for the coding agent reading the session's startup context.
                                                                     = uncommitted edits
 ```
 
-1. **Bundle.** A scratch index (`GIT_INDEX_FILE`, never your real index) is filled with `git add -A`, so `.gitignore` is respected. The tree is written, and a commit is made on top of `HEAD` that names the computer. That commit is force-pushed to `refs/worktree-handoff/<branch>`. The ref lives outside `refs/heads`, so it never shows up as a branch, and a normal `git fetch` doesn't download it.
-2. **Unwrap.** The next computer fetches the ref, checks that the bundle came from elsewhere and hasn't been applied yet, pulls with `--ff-only`, and applies the bundle's diff with `git apply`. If the branch moved on since the bundle was made, it applies with `--3way`, and real clashes are left as conflict markers.
+1. **Bundle:** A scratch index (`GIT_INDEX_FILE`, never your real index) is filled with `git add -A`, so `.gitignore` is respected. The tree is written, and a commit is made on top of `HEAD` that names the computer. That commit is force-pushed to `refs/worktree-handoff/<branch>`. The ref lives outside `refs/heads`, so it never shows up as a branch, and a normal `git fetch` doesn't download it.
+2. **Unwrap:** The next computer fetches the ref, checks that the bundle came from elsewhere and hasn't been applied yet, pulls with `--ff-only`, and applies the bundle's diff with `git apply`. If the branch moved on since the bundle was made, it applies with `--3way`, and real clashes are left as conflict markers.
 3. **Hooks.**
    - `SessionStart` unwraps, in the foreground, so the files are in place before the agent reads anything.
    - `SessionEnd` bundles, detached, so closing a chat never waits on the network.
@@ -61,11 +61,11 @@ The `agent` field is for the coding agent reading the session's startup context.
 
 ## Safety
 
-The working assumption is one person, working on one computer at a time. Everything else is guarded.
+**The working assumption is one person, working on one computer at a time.** Everything else is guarded.
 
 | Situation | What happens |
 |---|---|
-| Local uncommitted edits that aren't the bundle this machine sent | **Conflict.** Nothing is touched. The session's startup context gets the local files, the bundle's files and the overlap, so the agent raises it with you. |
+| Local uncommitted edits that aren't the bundle this machine sent | **Conflict:** Nothing is touched. The session's startup context gets the local files, the bundle's files and the overlap, so the agent raises it with you. |
 | The tree still holds the bundle this machine sent earlier | It's replaced by the newer bundle, after a backup ref (`refs/worktree-handoff-backup/<time>`). |
 | Some of the bundle has been committed since | Those files are skipped, and the rest applies. |
 | The branch moved on since the bundle | 3-way apply. A same-line clash leaves markers and gets reported. |
@@ -147,6 +147,6 @@ The code is a small standard-library package, `scripts/handoff/`, with 1 module 
 
 ## Limits
 
-- **The last push wins.** It's built for one person moving between machines, not for two machines editing at once. If both have unsent edits, the guard stops and asks.
-- **Bundles carry content, not file modes or the staging state.** On the receiving machine, everything arrives unstaged.
-- **The secrets guard is a safety net, not a scanner.** Keep real secrets in `.gitignore`.
+- **The last push wins:** It's built for one person moving between machines, not for two machines editing at once. If both have unsent edits, the guard stops and asks.
+- **Bundles carry content, not file modes or the staging state:** On the receiving machine, everything arrives unstaged.
+- **The secrets guard is a safety net, not a scanner:** Keep real secrets in `.gitignore`.
