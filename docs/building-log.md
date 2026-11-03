@@ -47,3 +47,18 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **Coverage got more useful for free.** It's reported per module now, which shows the gap is where I said it was in PR 2: `host.py` is at 66% because that's where the Windows-only code lives.
 
 **How I know it works.** All 44 tests pass on Linux, macOS and Windows, lint and types are clean across the 9 files, coverage is 84%, and the hook script still exits quietly outside a repo.
+
+## 4. Writing down the decisions, and a first release
+
+**What was wrong.** The README's safety table says what happens in every situation, and the tests prove it, but nothing said why. Why a hidden ref and not a branch? Why does a computer's name live in git config? Somebody changing those later (me included, in a year) would have to reverse-engineer the reasons from the code, and some of them only exist because the obvious version broke.
+
+**What I did.**
+- `docs/design.md`, 1 short section per decision, each with the trade-off I took.
+- `CHANGELOG.md` in the Keep a Changelog format, with everything so far as 0.1.0.
+- After this merges, a `v0.1.0` tag and a GitHub release built from the changelog.
+
+**Decisions worth a note.**
+- **The design notes include the bug.** The stable computer name exists because the first version trusted the network hostname, and a Mac on a phone hotspot stopped recognizing its own bundle. I'd rather the doc say that plainly than make the design look like it was right the first time, since the bug is the best argument for keeping the fix.
+- **No version in the plugin manifest.** Claude Code treats a version in `plugin.json` as the update signal, so pinning one would stop my own installed copies from following `main` until I remembered to bump it. The version lives in `pyproject.toml` and the git tag, and the changelog says why.
+
+**How I know it works.** It's docs, so the test is whether they're true. Every claim in `design.md` points at something real (a test, a constant, a commit), and CI's still green.
