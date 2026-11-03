@@ -54,7 +54,7 @@ The `agent` field is for the coding agent reading the session's startup context.
 
 1. **Bundle:** A scratch index (`GIT_INDEX_FILE`, never your real index) is filled with `git add -A`, so `.gitignore` is respected. The tree is written, and a commit is made on top of `HEAD` that names the computer. That commit is force-pushed to `refs/worktree-handoff/<branch>`. The ref lives outside `refs/heads`, so it never shows up as a branch, and a normal `git fetch` doesn't download it.
 2. **Unwrap:** The next computer fetches the ref, checks that the bundle came from elsewhere and hasn't been applied yet, pulls with `--ff-only`, and applies the bundle's diff with `git apply`. If the branch moved on since the bundle was made, it applies with `--3way`, and real clashes are left as conflict markers.
-3. **Hooks.**
+3. **Hooks:**
    - `SessionStart` unwraps, in the foreground, so the files are in place before the agent reads anything.
    - `SessionEnd` bundles, detached, so closing a chat never waits on the network.
    - `Stop` runs a heartbeat that bundles at most every 20 minutes. Editor chat panels keep sessions alive when you switch tabs, so `SessionEnd` alone fires too rarely.
@@ -141,7 +141,7 @@ CI runs ruff and mypy, runs every test on Linux, macOS and Windows, and measures
 
 ## How this is built
 
-This repo doubles as a record of how I work. Every change lands as a small pull request with green CI, and each one has an entry in the [build log](docs/building-log.md) saying what was wrong, what I decided and why, and how I know it works. The reasons behind the safety table are in the [design notes](docs/design.md), and releases are in the [changelog](CHANGELOG.md). If you'd rather have the short version of how I think as an engineer, with diagrams, that's [how I engineer](docs/how-i-engineer.md). I build with coding agents, and [section 9](docs/how-i-engineer.md#9-working-with-a-coding-agent) of that page says who did what.
+This repo doubles as a record of how I work. Every change lands as a small pull request with green CI, and each one has an entry in the [build log](docs/building-log.md) saying what was wrong, what I decided and why, and how I know it works. The reasons behind the safety table are in the [design notes](docs/design.md), and releases are in the [changelog](CHANGELOG.md). If you'd rather have the short version of how I think as an engineer, with diagrams, that's [how I engineer](docs/how-i-engineer.md). [Section 9](docs/how-i-engineer.md#9-working-with-a-coding-agent) of that page covers how I work with coding agents.
 
 The code is a small standard-library package, `scripts/handoff/`, with 1 module per job (settings, the secrets guard, the computer's name, the log, the git plumbing, the commands and the CLI). `scripts/worktree_handoff.py` is the entry point the hooks run.
 
