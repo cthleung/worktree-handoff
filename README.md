@@ -61,7 +61,7 @@ The `agent` field is for the coding agent reading the session's startup context.
 
 ## Safety
 
-The working assumption is one person, working on one computer at a time. Everything else is guarded.
+**The working assumption is one person, working on one computer at a time.** Everything else is guarded.
 
 | Situation | What happens |
 |---|---|

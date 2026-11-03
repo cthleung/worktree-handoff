@@ -88,7 +88,7 @@ flowchart LR
     file --> me[Me, when something looks off]
 ```
 
-The `agent` field is plain instructions ("Nothing was changed. Tell the user before editing: show them the local files, the bundle's files and the overlap..."). I think of it as an API whose client happens to be a language model, so it gets the same care as any other API. It's short and specific, and it only shows up when there's something to do. A normal session start prints nothing at all.
+The `agent` field is plain instructions ("Nothing was changed. Tell the user before editing: show them the local files, the bundle's files and the overlap..."). **I think of it as an API whose client happens to be a language model, so it gets the same care as any other API.** It's short and specific, and it only shows up when there's something to do. A normal session start prints nothing at all.
 
 ## 4. Test the real thing first, then the cheap things
 
@@ -151,7 +151,7 @@ The [design notes](design.md) give every decision its trade-off, and honestly th
 
 ## 9. Working with a coding agent
 
-I build with coding agents, mostly Claude Code, and I'd rather you hear that from me than work it out from the commit times. The agent wrote most of the code in this repo and the first draft of most of the docs. It made plenty of small calls too (the `strict=False` in PR 1 was its catch), but the problem, the rules and every merge were mine, and every safety rule in the design notes exists because it broke on my own 2 computers first.
+I build with coding agents, mostly Claude Code, and I'd rather you hear that from me than work it out from the commit times. The agent wrote most of the code in this repo and the first draft of most of the docs. It made plenty of small calls too (the `strict=False` in PR 1 was its catch), **but the problem, the rules and every merge were mine**, and every safety rule in the design notes exists because it broke on my own 2 computers first.
 
 ```mermaid
 flowchart LR
