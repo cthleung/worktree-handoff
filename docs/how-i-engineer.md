@@ -151,7 +151,7 @@ The [design notes](design.md) give every decision its trade-off, and honestly th
 
 ## 9. Working with a coding agent
 
-I build with coding agents, mostly Claude Code, and I'd rather you hear that from me than work it out from the commit times. The agent wrote most of the code in this repo and the first draft of most of the docs. It made plenty of small calls too (the `strict=False` in PR 1 was its catch), **but the problem, the rules and every merge were mine**, and every safety rule in the design notes exists because it broke on my own 2 computers first.
+I build with coding agents, mostly Claude Code, and they make plenty of good calls (the `strict=False` in PR 1 was the agent's catch). **The loop I run them in is the same one the rest of this page describes,** and every safety rule in the design notes exists because something broke on my own 2 computers first.
 
 ```mermaid
 flowchart LR
