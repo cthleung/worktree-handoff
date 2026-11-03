@@ -2,8 +2,8 @@
 
 Commits carry finished work. This carries the UNFINISHED work: tracked files you've edited,
 new untracked files and deletions, exactly as they sit in the working tree. It never
-commits to your branch, never stages anything and never touches .git/index, so "what
-changed since my last commit" in your editor stays exactly as it was.
+commits to your branch and never leaves anything staged, and bundles are built in a
+scratch index, so "what changed since my last commit" in your editor stays as it was.
 
   worktree-handoff end     bundle the working tree and push it (SessionEnd)
   worktree-handoff tick    the same, at most every tick_minutes (Stop, after each reply)

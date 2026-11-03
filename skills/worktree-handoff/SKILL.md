@@ -11,7 +11,7 @@ The worktree-handoff plugin carries uncommitted work (edited, new and deleted fi
 - **Stop** does the same at most every 20 minutes. This is the heartbeat, for chats that stay open.
 - **SessionStart** pulls the branch and unwraps the other computer's bundle as plain uncommitted edits.
 
-It never commits to a branch, never stages anything and never touches `.git/index`.
+It never commits to a branch and never leaves anything staged. Bundles are built in a scratch index, never `.git/index`.
 
 The `worktree-handoff` command is on the Bash tool's PATH while the plugin is enabled. If it isn't found, run `"${CLAUDE_PLUGIN_ROOT}/bin/worktree-handoff"` instead.
 

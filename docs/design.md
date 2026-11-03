@@ -34,11 +34,17 @@ The receiving side applies the bundle's diff with `git apply`, and falls back to
 
 Real clashes get left as conflict markers and reported, because an automatic resolution would just be a guess. Files that already landed in the branch since the bundle was made get skipped, and the rest applies.
 
+There's 1 catch, and the README used to get it wrong. `git apply --3way` works through the real index, so on that path the files it merges get staged, and the tool then resets the index to `HEAD` so nothing's left staged. That reset would also unstage anything the person had staged by hand. In practice it can't bite much, because an unwrap only runs on a clean tree or on this computer's own last bundle, but it does mean "never touches `.git/index`" was only true of bundling. The README now says what's true for both directions, which is that nothing's ever left staged.
+
 ## When to stop and ask
 
 The guard refuses to unwrap over local uncommitted edits, unless those edits are the bundle this same computer sent earlier (that's safe to replace, after a backup). It's strict on purpose. The dangerous case is 2 machines with unsent edits each, and a merge there might look fine and still be wrong, and the thing at risk is someone's unfinished work. So it stops, puts both sides' file lists and their overlap into the session's startup context, and the coding agent raises it with the person.
 
 There's an explicit way out, either `unwrap --force` (the local edits get backed up first) or `drop`.
+
+## Which bundle is newer: 2 clocks
+
+1 check compares times from 2 different computers. When this computer's tree still holds the bundle it sent, and the remote bundle came from the other computer, `start` has to work out whether the other one saw ours first. It does that by comparing when this computer sent its bundle (its own clock) with the remote bundle's commit time (the other computer's clock). Both machines set their clocks over the network, so they're normally just seconds apart, while handoffs are minutes or hours apart, but a clock that's badly off could probably make the wrong call. Nothing's lost either way, though. A wrong call in one direction stops and asks, and in the other the tree gets backed up before anything replaces it. The sturdier version would really just record which remote bundle this computer last saw, so no clocks are involved, and it's on my list.
 
 ## Nothing's ever lost: backup refs
 

@@ -1,6 +1,6 @@
 # How I build this
 
-This repo's small on purpose, and honestly it's the place I'd point to if you want to see how I work. Every change lands as a small pull request with green CI on Linux, macOS and Windows, and each one gets an entry here: what was wrong, what I decided and why, and how I know it works. The PRs are all in the [pull request tab](https://github.com/cthleung/worktree-handoff/pulls?q=is%3Apr), so you can read the diffs next to the reasoning.
+This repo's small on purpose, and honestly it's the place I'd point to if you want to see how I work. Every change goes in as a small pull request with green CI on Linux, macOS and Windows (I'm the only maintainer, so I merge my own), and each one gets an entry here: what was wrong, what I decided and why, and how I know it works. The PRs are all in the [pull request tab](https://github.com/cthleung/worktree-handoff/pulls?q=is%3Apr), so you can read the diffs next to the reasoning.
 
 One rule sits over all of it. I run this plugin on my own 2 computers every day, and they update it straight from `main`, so a bad merge breaks my own work first. Nothing merges unless the 30 end-to-end tests (2 throwaway clones and a local stand-in for GitHub) pass on every OS.
 
@@ -105,3 +105,20 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **The agent's catches count too:** The `strict=False` call was the agent's, and the section says so, because pretending every good decision was mine would honestly undercut the rest of it.
 
 **How I know it works:** The new diagram parsed and rendered in a headless browser, the doc passes my voice check, and the code's untouched, so there's not much else that could break.
+
+## 10. What a cold review found
+
+(PR 9 just turned the bold labels' periods into colons and bolded a few key lines, so it doesn't really need an entry.)
+
+**What was wrong:** I asked a fresh agent, playing a skeptical senior engineer with no context from my sessions, to read the code against the docs. It found 3 places where the docs said more than the code does, and I checked each one myself before I changed anything.
+- The README promised the tool "never touches `.git/index`." That's true for bundling, but a 3-way unwrap goes through the real index and then resets it, so the honest promise is just that nothing's ever left staged.
+- One check compares times from 2 different computers, and nothing I'd written said so.
+- The build log talked about review without saying the reviewer's mostly CI, since I'm the only maintainer and I merge my own.
+
+**What I did:** I've fixed the wording in the README, the bundled skill, the CLI help and the code comment, added a design note on the 3-way catch and a new one on the 2 clocks, and said plainly in this log and on the engineering page that the PRs are self-merged.
+
+**Decisions worth a note:**
+- **Fix the claim, not the code, for now.** The index reset can only unstage something on a clean tree or this computer's own old bundle, and the clock check fails safe both ways (it stops, or it backs up first). Changing either would've been a behavior change that needs its own tests, so the docs got honest first, and the clock-free version's on the list.
+- **Say who found it.** A reviewer who catches a wrong claim on their own is going to trust everything else a little less, so this entry says where these came from (and honestly, it's a pretty good argument for cold reviews).
+
+**How I know it works:** The `--help` text changed with the docstring, so the full suite ran again, and every claim I've changed now matches what the code does on both paths.
