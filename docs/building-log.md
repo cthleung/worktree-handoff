@@ -17,3 +17,19 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **The Windows check is `sys.platform == "win32"` now,** which mypy understands, so it stops complaining about `ctypes.windll` on the other 2 systems.
 
 **How I know it works.** Ruff and mypy pass in their own CI job, and the 30 end-to-end tests pass on all 3 systems, so I'm pretty confident the fixes didn't change any behavior.
+
+## 2. Fast unit tests, and coverage that follows the subprocesses
+
+**What was wrong.** Every test was end to end. That's the right default for a tool like this, since the bugs that matter live in how it talks to git, but it means the cheapest checks (does the secrets guard catch a GitHub token? does the log keep quiet events off the screen?) cost 30 seconds each time. There was also no measure of what the tests actually reach. And a small thing from PR 1: every check ran twice on a pull request, once for the push and once for the PR.
+
+**What I did.**
+- `tests/test_units.py`, 14 tests for the pure pieces (the secrets guard, the file-name matcher, `summarize`, the log, `pid_alive`), and they run in about 0.03 seconds.
+- A coverage job in CI that runs the whole suite under [coverage.py](https://coverage.readthedocs.io) and fails under 80%, with the report on the run's summary page.
+- CI on push now only runs for `main`, so a pull request gets 1 run instead of 2.
+
+**Decisions worth a note.**
+- **Coverage follows the subprocesses.** The end-to-end tests run the real script as a separate process, which a plain `coverage run` can't see, so a naive setup would've reported the unit tests and nothing else. Coverage.py's `patch = ["subprocess"]` measures inside those processes too, which is how it gets to 83% (lines and branches) instead of an embarrassing, and wrong, number.
+- **The floor is 80%, not 100%.** Most of what's missed is the Windows-only code (the `ctypes` process check, the computer-name lookup), which the Linux coverage job can't reach. Those paths still run in the Windows test job. Chasing 100% from 1 OS would mean faking the platform, and I'd rather the number be honest.
+- **No real-looking secrets in the source.** The guard's tests need strings shaped like AWS and GitHub tokens, and a public repo with those in it gets flagged by secret scanning. So the tests build them from pieces at runtime (`"gh" + "p_" + "a" * 36`), and the file itself never contains one.
+
+**How I know it works.** 44 tests pass (30 end to end plus 14 unit), lint and types are still clean, and the coverage job reports 83% with the floor at 80.

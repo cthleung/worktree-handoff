@@ -18,3 +18,14 @@ python_version = "3.10"
 files = ["scripts"]
 ignore_missing_imports = true
 warn_unused_ignores = true
+
+[tool.coverage.run]
+# The end-to-end tests run the script as a subprocess, so coverage follows them there.
+patch = ["subprocess"]
+parallel = true
+branch = true
+source = ["scripts"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
