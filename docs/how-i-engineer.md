@@ -149,9 +149,34 @@ The [design notes](design.md) give every decision its trade-off, and honestly th
 - **Plain git underneath.** A hidden ref, a scratch index and `git apply` are all stock git, so if the tool ever disappears, everything it left behind still makes sense to someone who knows git.
 - **Small PRs.** Each of the 5 is reviewable in 1 sitting, with its reasoning in the build log right next to the diff. That's how I work at my day job too, several small PRs a day when the work allows, because a change I can review in 1 sitting is a change I'd want to inherit.
 
+## 9. Working with a coding agent
+
+I build with coding agents, mostly Claude Code, and I'd rather you hear that from me than work it out from the commit times. The agent wrote most of the code in this repo and the first draft of most of the docs. It made plenty of small calls too (the `strict=False` in PR 1 was its catch), but the problem, the rules and every merge were mine, and every safety rule in the design notes exists because it broke on my own 2 computers first.
+
+```mermaid
+flowchart LR
+    me["Me: the problem, the rules,<br/>what done means"] --> agent[The agent drafts]
+    agent --> check{"Tests, proofs<br/>and lint"}
+    check -- "fails" --> agent
+    check -- "passes" --> review{I read the diff}
+    review -- "not right" --> agent
+    review -- "yes" --> main[Merge]
+    main --> use[My 2 computers run it daily]
+    use -- "it breaks" --> me
+```
+
+So most of my job on a repo like this is the part the rest of this page is about, which is saying what done means and then checking whether it really is. A few places where the checking paid off:
+
+- **The obvious fix would've crashed.** Ruff asked for an explicit `strict=` on a `zip()`, and `strict=True` is the textbook answer. Here it'd fail on every run, because git's `-z` output always ends in 1 extra empty field, and the end-to-end tests are what would've caught it.
+- **The refactor got proof instead of trust.** An agent can move 964 lines and get nearly all of it right, and "nearly" is the problem, which is why PR 3 compared the syntax trees and left the end-to-end tests untouched.
+- **The diagrams on this page were wrong at first.** The first draft had the lock in the wrong module and missed that `host.py` calls git, and drawing the graph from the real imports caught both before it went up.
+- **Real use caught what the tests couldn't.** The hotspot bug, the killed run that blocked the next one and the chats that never closed all came from me using it, and each one turned into a fix and a test.
+
+I think that's the useful part for anyone building agents for other people. I've spent a lot of time on the user's side of an agent that misreads what I want, and this page is mostly what I do about it.
+
 ## The same habits at work
 
-These aren't habits I put on for a portfolio, either. At the bank I deployed an NER model for PII detection to GPU inference servers and tuned it 1 variable at a time against a recorded baseline, and I wrote the losing result down as plainly as the win. I shipped it behind a feature toggle, with a fallback to the old path if the new service went down, which is pretty much section 2 of this page in a different costume. The full version's on [CreatorLoop's for-reviewers page](https://github.com/cthleung/CreatorLoop/blob/main/docs/for-reviewers.md#shipping-reliable-tested-code).
+These aren't habits I put on for a portfolio, either. Back in 2023, I was one of the named inventors on a [patent](https://patents.google.com/patent/US12639279B2/en) at the bank (granted in 2026) for an LLM agent that fills in missing documentation for datasets. We split it into small steps you could check on their own, and nothing it wrote counted until a data steward approved it, which is pretty much section 2 and section 9 of this page, years before I wrote either one. I also deployed an NER model for PII detection to GPU inference servers and tuned it 1 variable at a time against a recorded baseline, writing the losing result down as plainly as the win, and I shipped it behind a feature toggle with a fallback to the old path if the new service went down. The full version's on [CreatorLoop's for-reviewers page](https://github.com/cthleung/CreatorLoop/blob/main/docs/for-reviewers.md#shipping-reliable-tested-code).
 
 ## What I'd do next
 

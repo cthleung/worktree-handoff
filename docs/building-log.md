@@ -91,3 +91,17 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **It ends on what's missing.** Strict mypy, 2 people on one branch and the tagged release are all named, since a page that only lists strengths is, let's be real, a page nobody believes.
 
 **How I know it works.** All 6 diagrams parsed and rendered with Mermaid 11 in a headless browser before the push, every link resolves, and the code's untouched, so CI should just come back green on all 3 systems.
+
+## 8. Saying who wrote what
+
+(PR 7 was just a one-line color fix for the timeline diagram, so it doesn't really need an entry.)
+
+**What was wrong.** I build with coding agents, and nothing in the repo said so. Anyone reading the commit times could probably work it out, though, and a reader who finds that out on their own is going to trust everything else a little less, which is pretty much the opposite of what this repo's for.
+
+**What I did.** A new section in the how-I-engineer page, "Working with a coding agent." It says plainly that the agent wrote most of the code and the first drafts of the docs, it draws the loop I run it in, and it lists the places where the checks caught it, from the `zip()` that would've crashed to the diagrams on that same page. The "same habits at work" section now mentions the patent I'm a named inventor on, an LLM agent from my day job built on the same idea, and the README points at the new section.
+
+**Decisions worth a note.**
+- **Stories instead of claims.** A list of what I contributed is easy to write, but it's impossible to check. The 4 examples each point at a PR, a test or a commit, so a reviewer can go look.
+- **The agent's catches count too.** The `strict=False` call was the agent's, and the section says so, because pretending every good decision was mine would honestly undercut the rest of it.
+
+**How I know it works.** The new diagram parsed and rendered in a headless browser, the doc passes my voice check, and the code's untouched, so there's not much else that could break.
