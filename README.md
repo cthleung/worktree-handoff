@@ -141,7 +141,7 @@ CI runs ruff and mypy, runs every test on Linux, macOS and Windows, and measures
 
 ## How this is built
 
-This repo doubles as a record of how I work. Every change lands as a small pull request with green CI, and each one has an entry in the [build log](docs/building-log.md) saying what was wrong, what I decided and why, and how I know it works. The reasons behind the safety table are in the [design notes](docs/design.md), and releases are in the [changelog](CHANGELOG.md).
+This repo doubles as a record of how I work. Every change lands as a small pull request with green CI, and each one has an entry in the [build log](docs/building-log.md) saying what was wrong, what I decided and why, and how I know it works. The reasons behind the safety table are in the [design notes](docs/design.md), and releases are in the [changelog](CHANGELOG.md). If you'd rather have the short version of how I think as an engineer, with diagrams, that's [how I engineer](docs/how-i-engineer.md).
 
 The code is a small standard-library package, `scripts/handoff/`, with 1 module per job (settings, the secrets guard, the computer's name, the log, the git plumbing, the commands and the CLI). `scripts/worktree_handoff.py` is the entry point the hooks run.
 
