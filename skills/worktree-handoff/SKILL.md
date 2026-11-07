@@ -1,6 +1,6 @@
 ---
 name: worktree-handoff
-description: Handles worktree-handoff events and commands. Use when the session's startup context has lines starting "worktree-handoff:" (an unwrap, a conflict, conflict markers, a clean tree holding this computer's old bundle, bundles on other branches, a skipped run), or when the user asks about moving uncommitted work between computers, what came over from the other computer, the handoff log, or running worktree-handoff status, unwrap, or drop.
+description: Handles worktree-handoff events and commands. Use when the session's startup context has lines starting "worktree-handoff:" (an unwrap, a conflict, conflict markers, a clean tree holding this computer's old bundle, bundles on other branches, a skipped run), or when the user asks to switch branches, or about moving uncommitted work between computers, what came over from the other computer, the handoff log, or running worktree-handoff status, unwrap, or drop.
 ---
 
 # worktree-handoff
@@ -31,7 +31,15 @@ Every printed event carries an `agent` field. Follow it. In short:
 | `skip.in_progress` | A merge, rebase or similar is in progress, so the handoff didn't run. It runs again once that's finished. |
 | `push.denied` (in the log) | The remote refused the push, so pushes pause for 24 hours. If the repo isn't the user's, suggest opting it out. |
 
+| `handoff.unparked` | This branch's own parked work came back after a switch. Tell the user which files came back. |
+| `switch.refused` | Git wouldn't switch (usually a file the bundle leaves out, like a chat log, that differs on the other branch). Nothing moved and the work is back as it was. Show the user git's message. |
+| `switch.not_parked` | The work couldn't be bundled, so nothing was switched. Tell the user. |
+
 Never pick between the user's work and the bundle on their behalf. A backup ref restores either side: `git show <backup-ref>:<path>`, or `git diff HEAD <backup-ref>` to see all of it.
+
+## Switching branches
+
+When the user asks to switch branches, run `worktree-handoff switch BRANCH` (or `worktree-handoff switch -c NEW START` for a new one), never a plain `git switch` or `git checkout`. It parks this branch's uncommitted work in its bundle, puts those files back to the last commit, switches, and brings back whatever the new branch had parked, or what the other computer left on it. Files the bundle leaves out (excludes, held-back secrets, huge new files) stay in the folder as they are. Afterwards, tell the user what was parked and what came back.
 
 ## Commands
 
@@ -41,6 +49,7 @@ Never pick between the user's work and the bundle on their behalf. A backup ref 
 | `worktree-handoff unwrap` | Applies the bundle now, when it's safe. |
 | `worktree-handoff unwrap --force` | Applies it over local edits, after a backup ref. |
 | `worktree-handoff drop` | Deletes this branch's bundle from the remote. |
+| `worktree-handoff switch BRANCH` | Parks this branch's work, switches, and brings back BRANCH's parked work. `switch -c NEW START` makes a new branch. |
 | `worktree-handoff end` | Bundles and pushes right now. |
 | `worktree-handoff start` | Unwraps right now. |
 

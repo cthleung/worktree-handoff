@@ -38,6 +38,7 @@ LOUD_EVENTS = {
     "handoff.unwrapped", "handoff.conflict", "unwrap.conflict_markers", "unwrap.blocked",
     "unwrap.failed", "resume.own_bundle_tree_clean", "bundle.already_in_main",
     "tree.reverted_to_head", "bundle.other_branches", "git.failed", "skip.in_progress",
+    "handoff.unparked", "switch.refused", "switch.not_parked",
 }
 
 

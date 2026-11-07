@@ -320,6 +320,106 @@ class TwoComputers(unittest.TestCase):
         self.assertIsNone(self.read("mac", "guide.md"))
         self.assertEqual([b["branch"] for b in ev["bundle.other_branches"]["bundles"]], ["side/guide"])
 
+    # ------------------------------------------------------------ switching branches
+
+    def make_branch(self, host, name):
+        self.git(host, "branch", name)
+        self.git(host, "push", "-q", "-u", "origin", name)
+
+    def test_switch_parks_each_branch_and_brings_it_back(self):
+        self.make_branch("mac", "feature/x")
+        self.write("mac", "src/one.txt", "one, a main draft\n")
+        self.write("mac", "ideas.md", "new on main\n")
+        ev = self.handoff("mac", "switch", "feature/x")
+        self.assertIn("switch.parked", ev)
+        self.assertEqual(self.git("mac", "branch", "--show-current"), "feature/x")
+        self.assertEqual(self.status("mac"), "")
+        self.assertIn(REF, self.remote_refs())
+        self.write("mac", "src/two.txt", "two, on the feature\n")
+        ev = self.handoff("mac", "switch", "main")
+        self.assertIn("handoff.unparked", ev)
+        self.assertIn("handoff.unparked", self.last_stdout)
+        self.assertEqual(self.read("mac", "src/one.txt"), "one, a main draft\n")
+        self.assertEqual(self.read("mac", "ideas.md"), "new on main\n")
+        self.assertEqual(self.read("mac", "src/two.txt"), "two v1\n")
+        self.assertEqual(self.git("mac", "diff", "--cached", "--name-only"), "")
+        self.handoff("mac", "switch", "feature/x")
+        self.assertEqual(self.read("mac", "src/two.txt"), "two, on the feature\n")
+        self.assertIsNone(self.read("mac", "ideas.md"))
+        # coming back without changes doesn't push the same bundle again
+        self.handoff("mac", "switch", "main")
+        self.assertIn("bundle.unchanged", self.handoff("mac", "end"))
+
+    def test_switch_leaves_what_the_bundle_leaves_out(self):
+        self.write("mac", ".worktree-handoff.json", json.dumps({"exclude": ["chats"]}))
+        self.write("mac", "chats/log.md", "chat v1\n")
+        self.commit_all("mac", "chats and config")
+        self.make_branch("mac", "feature/x")
+        self.write("mac", "chats/log.md", "chat, still going\n")
+        self.write("mac", ".env", "API_KEY=hunter2\n")
+        self.write("mac", "src/one.txt", "one, a main draft\n")
+        self.handoff("mac", "switch", "feature/x")
+        self.assertEqual(self.read("mac", "src/one.txt"), "one v1\n")
+        self.assertEqual(self.read("mac", "chats/log.md"), "chat, still going\n")
+        self.assertEqual(self.read("mac", ".env"), "API_KEY=hunter2\n")
+
+    def test_refused_switch_puts_everything_back(self):
+        self.write("mac", ".worktree-handoff.json", json.dumps({"exclude": ["chats"]}))
+        self.write("mac", "chats/log.md", "chat v1\n")
+        self.commit_all("mac", "chats and config")
+        self.git("mac", "checkout", "-qb", "feature/x")
+        self.write("mac", "chats/log.md", "chat, as the feature has it\n")
+        self.commit_all("mac", "feature's chat")
+        self.git("mac", "checkout", "-q", "main")
+        self.write("mac", "chats/log.md", "chat, still going\n")  # git won't carry this across
+        self.write("mac", "src/one.txt", "one, a main draft\n")
+        ev = self.handoff("mac", "switch", "feature/x")
+        self.assertIn("switch.refused", ev)
+        self.assertEqual(self.git("mac", "branch", "--show-current"), "main")
+        self.assertEqual(self.read("mac", "src/one.txt"), "one, a main draft\n")
+        self.assertEqual(self.read("mac", "chats/log.md"), "chat, still going\n")
+        self.assertIn("bundle.unchanged", self.handoff("mac", "end"))
+
+    def test_parked_work_reaches_the_other_computer(self):
+        self.make_branch("mac", "feature/x")
+        self.write("mac", "src/one.txt", "one, a main draft\n")
+        self.handoff("mac", "switch", "feature/x")
+        ev = self.handoff("pc", "start")  # pc is on main
+        self.assertIn("handoff.unwrapped", ev)
+        self.assertEqual(self.read("pc", "src/one.txt"), "one, a main draft\n")
+
+    def test_new_chat_after_a_hand_switch_unparks(self):
+        self.make_branch("mac", "feature/x")
+        self.write("mac", "src/one.txt", "one, a main draft\n")
+        self.handoff("mac", "switch", "feature/x")
+        self.git("mac", "switch", "-q", "main")  # by hand, not through the handoff
+        ev = self.handoff("mac", "start")
+        self.assertIn("handoff.unparked", ev)
+        self.assertNotIn("resume.own_bundle_tree_clean", ev)
+        self.assertEqual(self.read("mac", "src/one.txt"), "one, a main draft\n")
+
+    def test_switch_parks_offline_and_pushes_later(self):
+        self.make_branch("mac", "feature/x")
+        self.write("mac", "src/one.txt", "one, a main draft\n")
+        good = self.git("mac", "remote", "get-url", "origin")
+        self.git("mac", "remote", "set-url", "origin", os.path.join(self.tmp, "nowhere.git"))
+        self.handoff("mac", "switch", "feature/x")
+        self.git("mac", "remote", "set-url", "origin", good)
+        self.assertNotIn(REF, self.remote_refs())
+        self.git("mac", "switch", "-q", "main")
+        ev = self.handoff("mac", "start")
+        self.assertIn("handoff.unparked", ev)
+        self.assertEqual(self.read("mac", "src/one.txt"), "one, a main draft\n")
+        self.assertIn(REF, self.remote_refs())
+
+    def test_switch_c_makes_a_new_branch(self):
+        self.write("mac", "src/one.txt", "one, a main draft\n")
+        ev = self.handoff("mac", "switch", "-c", "side/task", "origin/main")
+        self.assertIn("switch.done", ev)
+        self.assertEqual(self.git("mac", "branch", "--show-current"), "side/task")
+        self.assertEqual(self.status("mac"), "")
+        self.assertEqual(self.run_handoff("mac", "switch").returncode, 2)
+
     # ------------------------------------------------------------ opting out and skipping
 
     def test_opt_out_by_config_file(self):

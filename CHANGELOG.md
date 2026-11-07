@@ -4,12 +4,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Changed
-- A bundle on another branch is announced once per folder, then stays quiet until it goes away and comes back. Before, a side task pushing heartbeat bundles came up at every chat start. `status` still shows them all without using the announcement up.
-
 ### Added
+- `worktree-handoff switch BRANCH` (and `switch -c NEW [START]`): parks this branch's uncommitted work in its bundle, switches, and brings back what the new branch had parked. A refused switch puts everything back, files the bundle leaves out are never wiped, and work parked while offline is pushed the next time it comes back. A chat that opens on a clean tree holding its own parked bundle brings it back by itself.
+- The bundled skill tells the agent to switch branches through `switch`.
 - Tests for a second folder on its own branch (`git worktree add`), on the same computer as the main folder.
 - A README section on running a side task in its own folder.
+
+### Changed
+- A bundle on another branch is announced once per folder, then stays quiet until it goes away and comes back. Before, a side task pushing heartbeat bundles came up at every chat start. `status` still shows them all without using the announcement up.
 
 ## [0.1.0] - 2026-11-03
 
