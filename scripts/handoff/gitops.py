@@ -259,6 +259,18 @@ class Git:
         everything[self.branch()] = {**everything.get(self.branch(), {}), **changes}
         self.state_file.write_text(json.dumps(everything, indent=2), encoding="utf-8")
 
+    # other-branch bundles this folder has already told the agent about: {branch: host}
+    def load_announced(self) -> dict:
+        try:
+            data = json.loads((self.state_dir / "announced.json").read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def save_announced(self, seen: dict):
+        with contextlib.suppress(OSError):
+            (self.state_dir / "announced.json").write_text(json.dumps(seen, indent=2), encoding="utf-8")
+
     # lock
     def lock(self, log) -> bool:
         """Take the lock, waiting up to LOCK_WAIT_SEC for another run to finish. The lock

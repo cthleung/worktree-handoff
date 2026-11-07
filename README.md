@@ -102,6 +102,18 @@ The smaller guards (a lock that clears when its owner dies, a 24-hour pause on p
 - Bundles carry file contents. File modes and staging state stay behind, so everything shows up unstaged.
 - The secrets check catches the common shapes of keys and tokens. Keep real secrets in `.gitignore`.
 
+## A side task on another branch
+
+You can run a second job, like a long autonomous task, in its own folder on its own branch while you keep working on `main` next to it. Git calls that second folder a worktree:
+
+```bash
+git worktree add ../myrepo-side -b side/my-task
+```
+
+A chat in that folder works like any other. Its bundle goes to `refs/worktree-handoff/side/my-task`, and its state lives in that folder's own git directory, so your main folder and `main`'s bundle are left alone. The other computer mentions the side branch's bundle once, then stays quiet about it until it goes away and comes back.
+
+Keep the folder outside the repo's folder, or the main folder would try to bundle it as new files. An autonomous run counts as one long reply, so the heartbeat rarely fires during it, which means the task should commit and push its branch as it goes.
+
 ## Configure
 
 Everything is optional. Settings go in `.worktree-handoff.json` at the repo root, so they travel with the repo. A small one looks like this:

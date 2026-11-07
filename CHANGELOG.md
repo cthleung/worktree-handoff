@@ -2,6 +2,15 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org). The plugin manifest has no version on purpose, so installed copies keep following `main`. Releases are git tags.
 
+## [Unreleased]
+
+### Changed
+- A bundle on another branch is announced once per folder, then stays quiet until it goes away and comes back. Before, a side task pushing heartbeat bundles came up at every chat start. `status` still shows them all without using the announcement up.
+
+### Added
+- Tests for a second folder on its own branch (`git worktree add`), on the same computer as the main folder.
+- A README section on running a side task in its own folder.
+
 ## [0.1.0] - 2026-11-03
 
 The first tagged release.

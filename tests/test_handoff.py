@@ -86,24 +86,26 @@ class TwoComputers(unittest.TestCase):
     def log_file(self, host):
         return os.path.join(self.tmp, f"{host}.log")
 
-    def run_handoff(self, host, *args, **env):
-        return subprocess.run([sys.executable, "-I", SCRIPT, *args], cwd=self.dirs[host],
+    def run_handoff(self, where, *args, host=None, **env):
+        """`where` is a folder in self.dirs. `host` is the computer it's on, which is the
+        folder's own name unless a test gives a second folder on the same computer."""
+        return subprocess.run([sys.executable, "-I", SCRIPT, *args], cwd=self.dirs[where],
                               capture_output=True, text=True,
-                              env=clean_env(WORKTREE_HANDOFF_HOST=host,
-                                            WORKTREE_HANDOFF_LOG=self.log_file(host), **env))
+                              env=clean_env(WORKTREE_HANDOFF_HOST=host or where,
+                                            WORKTREE_HANDOFF_LOG=self.log_file(where), **env))
 
-    def handoff(self, host, *args, **env):
-        """Run the script on one computer; return the events it logged, by name."""
-        r = self.run_handoff(host, *args, **env)
+    def handoff(self, where, *args, host=None, **env):
+        """Run the script in one folder; return the events it logged, by name."""
+        r = self.run_handoff(where, *args, host=host, **env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.last_stdout = r.stdout
-        path = self.log_file(host)
+        path = self.log_file(where)
         if not os.path.exists(path):
             return {}
         with open(path, encoding="utf-8") as f:
-            f.seek(self.logs.get(host, 0))
+            f.seek(self.logs.get(where, 0))
             lines = f.read()
-            self.logs[host] = f.tell()
+            self.logs[where] = f.tell()
         return {e["event"]: e for e in map(json.loads, lines.splitlines())}
 
     def status(self, host):
@@ -260,6 +262,63 @@ class TwoComputers(unittest.TestCase):
         ev = self.handoff("pc", "start")
         self.assertIn("handoff.unwrapped", ev)
         self.assertEqual(self.read("pc", "src/one.txt"), "one on feature\n")
+
+    def test_other_branch_bundle_is_announced_once(self):
+        """A side branch that keeps pushing heartbeat bundles comes up once per folder,
+        not at every chat start. It comes up again after it goes away and comes back."""
+        self.git("mac", "checkout", "-qb", "side/x")
+        self.write("mac", "notes.md", "side work\n")
+        self.handoff("mac", "end")
+        ev = self.handoff("pc", "start")
+        self.assertIn("bundle.other_branches", ev)
+        self.assertIn("bundle.other_branches", self.last_stdout)
+        ev = self.handoff("pc", "start")
+        self.assertNotIn("bundle.other_branches", ev)
+        self.assertIn("bundle.other_branches_known", ev)
+        self.assertNotIn("other_branches", self.last_stdout)
+        self.write("mac", "notes.md", "more side work\n")
+        self.handoff("mac", "end")
+        self.assertNotIn("bundle.other_branches", self.handoff("pc", "start"))
+        # status shows it, and looking doesn't use anything up
+        self.assertIn("bundle.other_branches", self.handoff("pc", "status"))
+        self.assertNotIn("bundle.other_branches", self.handoff("pc", "start"))
+        self.handoff("mac", "drop")
+        self.assertNotIn("bundle.other_branches_known", self.handoff("pc", "start"))
+        self.write("mac", "notes.md", "back again\n")
+        self.handoff("mac", "end")
+        self.assertIn("bundle.other_branches", self.handoff("pc", "start"))
+
+    def test_side_folder_on_another_branch(self):
+        """A second folder made with `git worktree add`, on its own branch on the same
+        computer, keeps its own bundle and state. The main folder next to it is never
+        touched, and the other computer hears about the side branch once."""
+        side = os.path.join(self.tmp, "pc-side")
+        self.git("pc", "worktree", "add", "-q", "-b", "side/guide", side)
+        self.dirs["pc-side"] = side
+        self.write("pc", "src/one.txt", "one, a main draft\n")
+        self.write("pc-side", "guide.md", "side task output\n")
+        self.handoff("pc", "end")
+        self.handoff("pc-side", "end", host="pc")
+        refs = self.remote_refs()
+        self.assertIn(PREFIX + "side/guide", refs)
+        self.assertIn(REF, refs)
+        own_state = os.path.join(self.dirs["pc"], ".git", "worktrees", "pc-side", "worktree-handoff")
+        self.assertTrue(os.path.exists(os.path.join(own_state, "state.json")))
+        ev = self.handoff("pc", "start")
+        self.assertNotIn("bundle.other_branches", ev)
+        self.assertNotIn("handoff.unwrapped", ev)
+        self.assertEqual(self.read("pc", "src/one.txt"), "one, a main draft\n")
+        self.assertIsNone(self.read("pc", "guide.md"))
+        ev = self.handoff("pc-side", "start", host="pc")
+        self.assertNotIn("handoff.unwrapped", ev)
+        self.assertNotIn("handoff.conflict", ev)
+        self.assertEqual(self.read("pc-side", "guide.md"), "side task output\n")
+        self.assertEqual(self.read("pc-side", "src/one.txt"), "one v1\n")
+        ev = self.handoff("mac", "start")
+        self.assertIn("handoff.unwrapped", ev)
+        self.assertEqual(self.read("mac", "src/one.txt"), "one, a main draft\n")
+        self.assertIsNone(self.read("mac", "guide.md"))
+        self.assertEqual([b["branch"] for b in ev["bundle.other_branches"]["bundles"]], ["side/guide"])
 
     # ------------------------------------------------------------ opting out and skipping
 
