@@ -2,19 +2,17 @@
 
 [![tests](https://github.com/cthleung/worktree-handoff/actions/workflows/test.yml/badge.svg)](https://github.com/cthleung/worktree-handoff/actions/workflows/test.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776AB)
-![dependencies](https://img.shields.io/badge/dependencies-none-2ea44f)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Move between computers mid-task without committing unfinished work.
+Switch computers mid-task without committing unfinished work.
 
-worktree-handoff is a [Claude Code](https://code.claude.com) plugin. It carries your **uncommitted** work (edited files, new files, deletions) from one machine to another through a hidden git ref. Close a chat on your laptop, open one on your desktop, and the desktop's working tree has your edits as plain uncommitted changes, exactly where you left them.
+worktree-handoff is a [Claude Code](https://code.claude.com) plugin. Close a chat on your laptop (a chat is a Claude Code session), open one on your desktop, and the edits you hadn't committed are already in the working tree, new files and deletions included. The plugin does the carrying whenever a chat opens or closes, so there's nothing to run yourself.
 
-- It never commits to your branch and never leaves anything staged. Bundles are built in a scratch index, never `.git/index`, so your editor's "changes since the last commit" view stays as it was while you work.
-- It needs no server, no sync service and no setup beyond the git remote you already push to.
+Behind the scenes, closing a chat saves a snapshot of your uncommitted files (I call it a bundle) to a hidden git ref on your remote, and opening one on the other computer applies it as ordinary uncommitted changes. The remote you already push to is all it needs.
 
 ## What it looks like
 
-A real run between 2 throwaway clones (the log line is wrapped for width):
+A real run between 2 throwaway clones (I wrapped the log line to fit):
 
 ```console
 # on the laptop: the chat closes, the bundle is pushed, nothing is printed
@@ -33,7 +31,27 @@ $ git status --short
 ?? ideas.md
 ```
 
-The `agent` field is for the coding agent reading the session's startup context. It tells the agent what to say, so the person hears "2 files came over from your laptop" instead of reading a log.
+That log line only prints when something came over. Claude reads it from the session's startup context and opens the chat with something like "2 files came over from your laptop: notes.md and ideas.md", so you hear about it right in the conversation. A normal start, with nothing to carry, prints nothing.
+
+## Install
+
+**Before you turn it on:** a bundle holds the contents of your unfinished files, and it gets pushed to your remote. On a public repo, that makes them public. The plugin is on for every repo by default, so switch it off wherever that matters:
+
+```bash
+git config worktree-handoff.enabled false   # this repo, this computer
+export WORKTREE_HANDOFF=off                  # everywhere
+```
+
+Then, inside Claude Code:
+
+```
+/plugin marketplace add cthleung/worktree-handoff
+/plugin install worktree-handoff@worktree-handoff
+```
+
+Or from a shell: `claude plugin marketplace add cthleung/worktree-handoff`, then `claude plugin install worktree-handoff@worktree-handoff`.
+
+Install it on each computer, with the same remote on both. You need `git` and Python 3.10+ on your PATH, and that's all, since it only uses Python's standard library. On Windows it runs through Git Bash, which comes with Git for Windows. It works in Claude Code in the terminal and in the VS Code extension, which is where I use it. To check it, ask Claude to run `worktree-handoff status`.
 
 ## How it works
 
@@ -52,101 +70,74 @@ The `agent` field is for the coding agent reading the session's startup context.
                                                                     = uncommitted edits
 ```
 
-1. **Bundle:** A scratch index (`GIT_INDEX_FILE`, never your real index) is filled with `git add -A`, so `.gitignore` is respected. The tree is written, and a commit is made on top of `HEAD` that names the computer. That commit is force-pushed to `refs/worktree-handoff/<branch>`. The ref lives outside `refs/heads`, so it never shows up as a branch, and a normal `git fetch` doesn't download it.
-2. **Unwrap:** The next computer fetches the ref, checks that the bundle came from elsewhere and hasn't been applied yet, pulls with `--ff-only`, and applies the bundle's diff with `git apply`. If the branch moved on since the bundle was made, it applies with `--3way`, and real clashes are left as conflict markers.
-3. **Hooks:**
-   - `SessionStart` unwraps, in the foreground, so the files are in place before the agent reads anything.
-   - `SessionEnd` bundles, detached, so closing a chat never waits on the network.
-   - `Stop` runs a heartbeat that bundles at most every 20 minutes. Editor chat panels keep sessions alive when you switch tabs, so `SessionEnd` alone fires too rarely.
+When a chat closes, the plugin stages your working tree in a scratch index (so bundling never touches your real one), turns that tree into a commit on top of `HEAD` with the computer's name in the message, and force-pushes the commit to `refs/worktree-handoff/<branch>`. The ref sits outside `refs/heads`, so it never shows up as a branch and a normal `git fetch` skips it.
+
+When a chat opens on the other computer, the plugin fetches the ref, checks that the bundle came from somewhere else and hasn't been applied yet, pulls your branch and applies the bundle's diff with `git apply`. If the branch has moved on since, it uses `--3way` and leaves any real clash as conflict markers for you to sort out.
+
+Three Claude Code hooks set all of this off:
+
+- `SessionStart` unwraps in the foreground, so the files are in place before Claude reads anything.
+- `SessionEnd` bundles in the background, so closing a chat never waits on the network.
+- `Stop` is the heartbeat. It bundles again after Claude finishes a reply, at most every 20 minutes. Editor chat panels keep sessions running when you switch tabs, so `SessionEnd` alone fires too rarely.
 
 ## Safety
 
-**The working assumption is one person, working on one computer at a time.** Everything else is guarded.
+It assumes one person on one computer at a time. If both machines have unsent edits, it stops and asks you to sort it out.
 
 | Situation | What happens |
 |---|---|
-| Local uncommitted edits that aren't the bundle this machine sent | **Conflict:** Nothing is touched. The session's startup context gets the local files, the bundle's files and the overlap, so the agent raises it with you. |
-| The tree still holds the bundle this machine sent earlier | It's replaced by the newer bundle, after a backup ref (`refs/worktree-handoff-backup/<time>`). |
-| Some of the bundle has been committed since | Those files are skipped, and the rest applies. |
-| The branch moved on since the bundle | 3-way apply. A same-line clash leaves markers and gets reported. |
-| A merge, rebase, cherry-pick or bisect is in progress | Skipped until it's finished. |
-| New files that look like secrets (`.env`, `*.pem`, `id_rsa`, ...) or contain tokens (AWS, GitHub, OpenAI, Anthropic, Slack, Google, GitLab), and tracked files whose new lines contain one | Left out of the bundle and logged. An `allow` list lets a file through. |
-| New files over 50 MB | Left out. |
-| The remote refuses the push (no access, protected refs) | Logged once, then pushes pause for 24 hours. |
-| A hook killed mid-run (editors restart sessions on resume) | The lock records its owner's pid, so a dead owner's lock is cleared at once. A live lock is waited on for up to a minute. |
-| Not a git repo, no remote, detached HEAD, no commits | Quietly does nothing. |
+| You have edits here that didn't come from a bundle | **Conflict:** nothing is touched. The session's startup context lists your local files, the bundle's files and where they overlap, and Claude raises it with you. |
+| The files here are still the last bundle this computer sent | The newer bundle replaces them, after a backup ref (`refs/worktree-handoff-backup/<time>`). |
+| You've committed some of the bundle's files since | Those files are skipped and the rest applies. |
+| The branch moved on since the bundle | 3-way apply. A clash on the same line leaves markers and gets reported. |
+| A new file looks like a secret (`.env`, `*.pem`, `id_rsa`), or a file holds a token | Its changes stay out of the bundle (the other computer gets the committed version, or nothing for a new file) and it's logged. The `allow` setting lets a file through. |
+| A new file is over 50 MB | It stays out. |
+| It isn't a git repo, there's no remote, HEAD is detached, there are no commits yet, or a merge or rebase is in progress | Nothing happens. |
 
-## Install
+The smaller guards (a lock that clears when its owner dies, a 24-hour pause on pushes after the remote says no) are covered in the [design notes](docs/design.md).
 
-Inside Claude Code:
+## Limits
 
-```
-/plugin marketplace add cthleung/worktree-handoff
-/plugin install worktree-handoff@worktree-handoff
-```
-
-Or from a shell, with `claude plugin marketplace add cthleung/worktree-handoff` and `claude plugin install worktree-handoff@worktree-handoff`.
-
-It needs `git` and Python 3.10+ on the PATH. It uses only the standard library, and pretty-prints with [`structlog`](https://www.structlog.org) when that's installed. On Windows it runs through Git Bash, which comes with Git for Windows.
-
-It's on for every repo by default. Opt out where you don't want it:
-
-```bash
-git config worktree-handoff.enabled false   # this repo, this computer
-export WORKTREE_HANDOFF=off                  # everywhere
-```
+- The heartbeat only runs after Claude replies. If a laptop dies mid-task, you lose what changed since the last bundle, which is 20 minutes at most while Claude's been replying, and longer if you've been hand-editing with no replies.
+- Bundles carry file contents. File modes and staging state stay behind, so everything shows up unstaged.
+- The secrets check catches the common shapes of keys and tokens. Keep real secrets in `.gitignore`.
 
 ## Configure
 
-All of it is optional, in `.worktree-handoff.json` at the repo root, so it travels with the repo:
+Everything is optional. Settings go in `.worktree-handoff.json` at the repo root, so they travel with the repo. A small one looks like this:
 
 ```json
-{
-  "enabled": true,
-  "exclude": [".specstory", "scratch"],
-  "remote": "origin",
-  "tick_minutes": 20,
-  "pull": true,
-  "allow": [".env.example"]
-}
+{ "exclude": ["scratch"], "tick_minutes": 5 }
 ```
+
+| Key | Default | What it does |
+|---|---|---|
+| `enabled` | `true` | Set to `false` to switch the plugin off for this repo |
+| `exclude` | `[]` | Paths to keep out of bundles |
+| `remote` | `"origin"` | The remote to push to and fetch from |
+| `tick_minutes` | `20` | The shortest gap between heartbeat bundles |
+| `pull` | `true` | Runs `git pull --ff-only` before unwrapping |
+| `allow` | `[]` | Files the secrets check should let through |
 
 ## Commands
 
-While the plugin is enabled, `worktree-handoff` is on the agent's PATH. You can also run `bin/worktree-handoff` from the plugin folder yourself.
+The hooks run these for you. While the plugin is enabled, `worktree-handoff` is on Claude's PATH, and you can run `bin/worktree-handoff` from the plugin folder yourself.
 
 | Command | What it does |
 |---|---|
-| `status` | Config, local state, the remote bundle, and what `start` would do |
+| `status` | Shows the config, the local state, the remote bundle and what `start` would do |
 | `start` / `end` | Unwrap or bundle right now |
 | `unwrap [--force]` | Apply the bundle. `--force` applies it over local edits, after a backup ref |
 | `drop` | Delete this branch's bundle from the remote |
 
+Each new bundle replaces the last one, and the ref is deleted once your work is all committed. To clear everything the plugin left on your remote, `drop` each branch, or delete the refs yourself with `git push origin --delete refs/worktree-handoff/<branch>`. To remove the plugin, run `claude plugin uninstall worktree-handoff@worktree-handoff`.
+
 ## Logs
 
-The log is JSON lines in `.git/worktree-handoff/handoff.log`, one event per line, with the computer, pid, branch and every decision's inputs. A normal session start prints nothing. Only events that need attention (`handoff.unwrapped`, `handoff.conflict`, `unwrap.conflict_markers`, ...) go into the agent's context, each with an `agent` field saying what to do. The bundled skill covers the rest.
+Every decision gets a line in `.git/worktree-handoff/handoff.log` (JSON, one event per line), so you can see why it did what it did. Only the events that need attention reach Claude, like `handoff.unwrapped` and `handoff.conflict`, and each one carries an `agent` field telling Claude what to do about it.
 
-## Tests
+## Development
 
-```bash
-python -m unittest
-```
+Run the tests with `python -m unittest`. Most of them run 2 throwaway clones against a local bare repo standing in for GitHub, which covers the cases in the safety table. CI runs ruff, mypy and the tests on Linux, macOS and Windows.
 
-44 tests in 2 layers:
-
-- **30 end-to-end tests** run 2 throwaway clones against a local bare repo standing in for GitHub, and cover the cases in the safety table: the tree and index left alone, conflicts, 3-way applies, markers, backups, branches, opting out, the secrets guard, a remote that refuses pushes, the heartbeat and the lock.
-- **14 unit tests** cover the pure pieces (the secrets guard, the log, the pid check) in well under a second.
-
-CI runs ruff and mypy, runs every test on Linux, macOS and Windows, and measures coverage inside the end-to-end subprocesses too (84%, with an 80% floor).
-
-## How this is built
-
-This repo doubles as a record of how I work. Every change lands as a small pull request with green CI, and each one has an entry in the [build log](docs/building-log.md) saying what was wrong, what I decided and why, and how I know it works. The reasons behind the safety table are in the [design notes](docs/design.md), and releases are in the [changelog](CHANGELOG.md). If you'd rather have the short version of how I think as an engineer, with diagrams, that's [how I engineer](docs/how-i-engineer.md). [Section 9](docs/how-i-engineer.md#9-working-with-a-coding-agent) of that page covers how I work with coding agents.
-
-The code is a small standard-library package, `scripts/handoff/`, with 1 module per job (settings, the secrets guard, the computer's name, the log, the git plumbing, the commands and the CLI). `scripts/worktree_handoff.py` is the entry point the hooks run.
-
-## Limits
-
-- **The last push wins:** It's built for one person moving between machines, not for two machines editing at once. If both have unsent edits, the guard stops and asks.
-- **Bundles carry content, not file modes or the staging state:** On the receiving machine, everything arrives unstaged.
-- **The secrets guard is a safety net, not a scanner:** Keep real secrets in `.gitignore`.
+Every change here goes in as a small pull request with green CI, and the [build log](docs/building-log.md) has an entry for each one about what broke and how I fixed it. The [design notes](docs/design.md) explain why it works the way it does, the [changelog](CHANGELOG.md) lists the releases, and if you're curious how I work with coding agents, that's [section 9 of how I engineer](docs/how-i-engineer.md#9-working-with-a-coding-agent).
