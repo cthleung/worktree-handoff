@@ -105,7 +105,7 @@ def _pull(g: Git, log) -> bool:
     return False
 
 
-def _fetch(g: Git, log) -> dict | None:
+def _fetch(g: Git, log, remember: bool = True) -> dict | None:
     ok, msg = g.try_run("fetch", "-q", "--prune", g.remote,
                         f"+{REF_PREFIX}*:{REF_PREFIX}*", timeout=NET_TIMEOUT)
     if not ok:
@@ -117,12 +117,15 @@ def _fetch(g: Git, log) -> dict | None:
                  bundled_at=remote["when"], parent=remote["parent"][:10])
     else:
         log.info("bundle.none", detail=f"no {g.ref} on {g.remote}")
-    _other_branches(g, log)
+    _other_branches(g, log, remember)
     return remote
 
 
-def _other_branches(g: Git, log):
-    """Bundles another computer left on a branch this computer isn't on."""
+def _other_branches(g: Git, log, remember: bool = True):
+    """Bundles another computer left on a branch this folder isn't on. Each one is announced
+    once per folder, so a side task on another branch that keeps pushing heartbeat bundles
+    doesn't come up at every chat start. It's announced again only after it goes away and
+    comes back. `status` passes remember=False, so looking doesn't use up the announcement."""
     out = g.run("for-each-ref", "--format=%(refname)", REF_PREFIX, check=False)
     others = []
     for ref in out.splitlines():
@@ -131,14 +134,22 @@ def _other_branches(g: Git, log):
         b = g.read_bundle(ref)
         if b and b["host"] != host_name():
             others.append({"branch": ref[len(REF_PREFIX):], "from_host": b["host"], "bundled_at": b["when"]})
-    if others:
-        log.info("bundle.other_branches", bundles=others, current_branch=g.branch(),
+    seen = g.load_announced() if remember else {}
+    new = [o for o in others if seen.get(o["branch"]) != o["from_host"]]
+    if remember:
+        g.save_announced({o["branch"]: o["from_host"] for o in others})
+    if new:
+        log.info("bundle.other_branches", bundles=new, current_branch=g.branch(),
                  agent="Another computer left uncommitted work on a different branch. Mention "
-                       "it to the user; switching to that branch and running "
-                       "`worktree-handoff start` brings it over.")
+                       "it to the user once. Opening that branch (a checkout, or a second "
+                       "folder made with `git worktree add`) and starting a chat there brings "
+                       "it over.")
+    elif others:
+        log.info("bundle.other_branches_known", count=len(others),
+                 branches=[o["branch"] for o in others], detail="already announced in this folder")
 
 
-def decide(g: Git, log) -> dict:
+def decide(g: Git, log, remember: bool = True) -> dict:
     """Work out what `start` should do. Returns a plan dict; `start` carries it out and
     `status` only shows it."""
     me = host_name()
@@ -154,7 +165,7 @@ def decide(g: Git, log) -> dict:
     if held:
         log.info("tree.secrets_held", files=held)
 
-    remote = _fetch(g, log)
+    remote = _fetch(g, log, remember)
     plan["remote"] = remote
     if not remote:
         plan["action"] = "push_ours" if state.get("sent") and not state.get("pushed") else "pull_only"
@@ -338,7 +349,7 @@ def cmd_unwrap(g: Git, log, force: bool) -> int:
 def cmd_status(g: Git, log) -> int:
     log.info("config", **g.config, config_file=str(g.root / CONFIG_FILE),
              log_file=str(log.path), ref=g.ref)
-    plan = decide(g, log)
+    plan = decide(g, log, remember=False)
     remote = plan.get("remote")
     if remote:
         log.info("bundle.contents", **summarize(g.changes(remote["parent"], remote["tree"])))

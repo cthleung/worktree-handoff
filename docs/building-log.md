@@ -122,3 +122,17 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **Say who found it.** A reviewer who catches a wrong claim on their own is going to trust everything else a little less, so this entry says where these came from (and honestly, it's a pretty good argument for cold reviews).
 
 **How I know it works:** The `--help` text changed with the docstring, so the full suite ran again, and every claim I've changed now matches what the code does on both paths.
+
+## 12. A side task on another branch
+
+(The README rewrite just before this went straight to main without a PR, so it doesn't get a number here.)
+
+**What was wrong:** I want to run a long autonomous job on my PC, in its own folder on its own branch, while I keep drafting on `main`. Most of it worked already, since every branch gets its own bundle and every folder keeps its own state, but 2 things weren't right. A bundle on another branch got announced at every chat start, so a side task pushing a fresh heartbeat bundle every 20 minutes would've had Claude bringing it up on the other computer over and over. And nothing tested a second folder made with `git worktree add`, which is the setup I was about to lean on.
+
+**What I did:** Each other-branch bundle is announced once per folder now, recorded in a small `announced.json` next to that folder's state, and it comes up again only after it goes away and comes back. `status` still lists every one, without using the announcement up. There are 2 new end-to-end tests, one for the announcement and one for a side folder on the same computer as `main`, and the README has a short section on running a side task.
+
+**Decisions worth a note:**
+- **Once per branch, not once per bundle:** A heartbeat makes a new bundle every few minutes, so keying on the bundle would've brought the notice straight back. The key is the branch plus the computer that sent it.
+- **Once per folder:** The record lives in each folder's own git directory, so a brand-new side folder still hears about `main`'s bundle from the other computer, once.
+
+**How I know it works:** All 46 tests pass locally, and so do ruff and mypy at the versions CI pins. The side-folder test also checks that the main folder next door, and `main`'s bundle, stay as they were.
