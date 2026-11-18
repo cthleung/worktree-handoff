@@ -1,0 +1,97 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "Trace a handoff",
+  "description": "Follow an unfinished edit from one computer to the other, then work backward from a test to find where a change belongs.",
+  "steps": [
+    {
+      "file": "README.md",
+      "pattern": "^## How it works$",
+      "title": "Start with an unfinished edit",
+      "description": "Say you've edited `src/one.txt` on your Mac and you want to finish it on your PC, so you close the chat and open it there with the edit still waiting to be committed. Where does the code first hear that the chat's closed? Search the workspace for `SessionEnd` and look for the entry that actually runs a command.\n\nGive each search a go before you click Next. Go to Definition helps when you've got a function under your cursor, and when all you've got is some text from a log, just paste it into workspace search. The tour's status bar item brings you back to this stop after you've poked around."
+    },
+    {
+      "file": "hooks/hooks.json",
+      "pattern": "^[ \\t]*\"SessionEnd\":",
+      "title": "Read what the editor runs",
+      "description": "`SessionEnd` runs the shell script with `end` as its argument, so follow that into the script and see if you can spot what lets the chat close while Git's still pushing the edit. It's one shell character."
+    },
+    {
+      "file": "scripts/hook.sh",
+      "pattern": "^if \\[ \"\\$EVENT\" = \"end\" \\]",
+      "title": "Follow the argument into Python",
+      "description": "The `&` sends `end` and `tick` into the background. `start` runs in the foreground, so the edits are there when Claude starts reading. Open `worktree_handoff.py` from the command here and follow its `main` import. Inside `main`, which call handles `end`, and which other command uses that same call?"
+    },
+    {
+      "file": "scripts/handoff/cli.py",
+      "pattern": "^[ \\t]*if command in \\(\"end\", \"tick\"\\):$",
+      "title": "Find the command handler",
+      "description": "There's `cmd_end()` for both commands. The heartbeat already checked the time earlier in `main` (look for `tick_due()`), so by the time a tick gets here it just bundles your edits, same as when you close a chat. Jump to `cmd_end()` and see who hands it a Git tree."
+    },
+    {
+      "file": "scripts/handoff/commands.py",
+      "pattern": "^def cmd_end\\(",
+      "title": "Find where the edits are gathered",
+      "description": "There's the call to `g.worktree_tree()`. You get a tree ID back, along with the files that had to stay behind, so follow the method and see if you can find where it tells Git which index to use. If the editor can't jump there, just search for `def worktree_tree`."
+    },
+    {
+      "file": "scripts/handoff/gitops.py",
+      "pattern": "^[ \\t]*def worktree_tree\\(",
+      "title": "See which index Git writes to",
+      "description": "`GIT_INDEX_FILE` points Git at a scratch index, and because each staging call gets `env=e`, you can have an edit staged in VS Code and it'll still be staged after the bundle goes out. `_guard()` is the detour for files that need to stay behind. Back at the caller, find where the tree gets a parent commit and a ref."
+    },
+    {
+      "file": "scripts/handoff/commands.py",
+      "pattern": "^[ \\t]*commit = g\\.commit_tree\\(tree, head,",
+      "title": "Find the ref that travels",
+      "description": "`commit_tree()` makes a commit whose parent is the sender's `HEAD`, and `update-ref` points `g.ref` at it. Find the `ref` property to see how the branch name becomes part of `refs/worktree-handoff/<branch>`. The push uses that ref on both ends.\n\nNow you're on the PC. Start from `SessionStart` in the hook config and follow `start` until you see where the program decides whether it should bring the edit over."
+    },
+    {
+      "file": "scripts/handoff/commands.py",
+      "pattern": "^def decide\\(",
+      "title": "Read the receiver's decision",
+      "description": "So `cmd_start()` asks for a plan. `_fetch()` looks for the bundle, and once you've got the Mac's bundle on a clean PC that's seeing it for the first time, you can read the early returns and work out which `plan['action']` comes back. Follow that action from `cmd_start()` to the call that changes the PC's files."
+    },
+    {
+      "file": "scripts/handoff/commands.py",
+      "pattern": "^def _apply_bundle\\(",
+      "title": "Find where the edit comes back",
+      "description": "The plan says `unwrap`, so `cmd_start()` calls `_unwrap()`, which pulls before it gets here. Look at the first two arguments to `g.patch()` and see where they came from (the bundle's parent matters here). If someone pushes another commit while you're switching computers and the pull brings it in, which apply path runs?\n\nOnce the edit's back, Claude hears about it. Search for `handoff.unwrapped` and follow the logging call until you find where an event goes to the log file and where it can also reach stdout."
+    },
+    {
+      "file": "scripts/handoff/log.py",
+      "pattern": "^[ \\t]*def _emit\\(",
+      "title": "Follow the message back to Claude",
+      "description": "The function tries to append a JSON line first, then checks whether the event belongs on stdout too, which is how Claude gets the message that the files came over. Find `LOUD_EVENTS` and check that `handoff.unwrapped` is in it. Now use that same event name to find a test that checks the file on the PC and the message Claude sees."
+    },
+    {
+      "file": "tests/test_handoff.py",
+      "pattern": "^[ \\t]*def test_plain_handoff\\(",
+      "title": "Check what the test actually proves",
+      "description": "`mac` and `pc` are just throwaway clones that share a local bare repo, so the test can check the file contents and the staging area without needing a second computer (or even GitHub). `self.last_stdout` holds what Claude would see. From the repo root, you can run the test on its own.\n\n```sh\npython3 -m unittest tests.test_handoff.TwoComputers.test_plain_handoff\n```\n\nNow give the PC an edit of its own. Find the existing test where `start` refuses to bring the Mac's edit over (there's a log event you can search for in the README's Logs section)."
+    },
+    {
+      "file": "tests/test_handoff.py",
+      "pattern": "^[ \\t]*def test_guard_refuses_over_unsent_local_edits\\(",
+      "title": "Work backward from a refusal",
+      "description": "Read what the test asserts after `start`. The first file still has its original contents on the PC, even though the PC's unsent edit is in a different file. The test goes on to check a forced unwrap, so stay with `start` for now. Use the event assertion to find the log call, then work back to the condition that chose `conflict`. What would've let the PC's edits get past that check?"
+    },
+    {
+      "file": "scripts/handoff/commands.py",
+      "pattern": "^[ \\t]*if dirty and not ours_stale:$",
+      "title": "Find the condition that says stop",
+      "description": "The PC's tree would have to match the bundle it last sent, which is what `ours_stale` checks for here. In the test there's a fresh edit on the PC, so the action comes back as `conflict`, and `cmd_start()` reports the files and returns before it reaches `_unwrap()`. The Mac's edit stays on the Mac."
+    },
+    {
+      "file": "README.md",
+      "pattern": "^## Logs$",
+      "title": "Try a change with just the symptom",
+      "description": "Here's one to find on your own. After a successful plain handoff, make the message Claude reads say that the edits are ready to review. Keep the event name and the file list as they are.\n\nStart with the text Claude already sees (try searching for `carried over from the other computer`, or just the first few words if the string's split across lines). Find where you'd edit it and which test you'd extend to check the new wording. You can try it in a throwaway copy with the same test command from earlier. Next will take you to the line."
+    },
+    {
+      "file": "scripts/handoff/commands.py",
+      "pattern": "^[^\\r\\n]*\"These files are now uncommitted edits",
+      "title": "Check where your change belongs",
+      "description": "On this path, `_apply_bundle()` supplies the `agent` text to the success log. That's where the instruction lives. The logger prints the fields it gets, so you can change the instruction in the command code and use `test_plain_handoff` to check the new phrase in `self.last_stdout`. Its existing assertions still check that the edit arrived and stayed unstaged."
+    }
+  ]
+}

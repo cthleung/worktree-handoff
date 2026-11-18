@@ -157,6 +157,8 @@ Every decision gets a line in `.git/worktree-handoff/handoff.log` (JSON, one eve
 
 ## Development
 
+If you want to follow an edit through the code, open this repo in VS Code with the [CodeTour extension](https://marketplace.visualstudio.com/items?itemName=vsls-contrib.codetour). Run `CodeTour: Start Tour` and pick [Trace a handoff](.tours/trace-a-handoff.tour).
+
 Run the tests with `python -m unittest`. Most of them run 2 throwaway clones against a local bare repo standing in for GitHub, which covers the cases in the safety table. CI runs ruff, mypy and the tests on Linux, macOS and Windows.
 
 Every change here goes in as a small pull request with green CI, and the [build log](docs/building-log.md) has an entry for each one about what broke and how I fixed it. The [design notes](docs/design.md) explain why it works the way it does, the [changelog](CHANGELOG.md) lists the releases, and if you're curious how I work with coding agents, that's [section 9 of how I engineer](docs/how-i-engineer.md#9-working-with-a-coding-agent).
