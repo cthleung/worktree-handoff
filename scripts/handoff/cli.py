@@ -2,7 +2,7 @@
 
 Commits carry finished work. This carries the UNFINISHED work: tracked files you've edited,
 new untracked files and deletions, exactly as they sit in the working tree. It never
-commits to your branch and never leaves anything staged, and bundles are built in a
+commits to your branch and leaves everything unstaged by default, and bundles are built in a
 scratch index, so "what changed since my last commit" in your editor stays as it was.
 
   worktree-handoff end     bundle the working tree and push it (SessionEnd)
@@ -29,7 +29,8 @@ alone, and the log line carries an `agent` field telling the coding agent what t
 
 Config, all optional: .worktree-handoff.json at the repo root (it travels with the repo)
   {"enabled": true, "exclude": [".specstory"], "remote": "origin", "tick_minutes": 20,
-   "pull": true, "allow": ["path/the/secrets/guard/should/let/through"]}
+   "pull": true, "allow": ["path/the/secrets/guard/should/let/through"],
+   "preserve_staging": false}
 Opt out on one computer only: git config worktree-handoff.enabled false
 Turn it off everywhere: WORKTREE_HANDOFF=off in the environment.
 

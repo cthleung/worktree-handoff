@@ -116,6 +116,17 @@ class TwoComputers(unittest.TestCase):
         self.git(host, "commit", "-qm", msg)
         self.git(host, "push", "-q", "origin", "HEAD")
 
+    def preserve_staging(self, host):
+        config = os.path.join(self.tmp, "seed", ".worktree-handoff.json")
+        if not os.path.exists(config):
+            self.write(os.path.join(self.tmp, "seed"), ".worktree-handoff.json",
+                       json.dumps({"preserve_staging": True}))
+            self.sh("git", "add", ".worktree-handoff.json", cwd=os.path.join(self.tmp, "seed"))
+            self.sh("git", "commit", "-qm", "enable staging preservation", cwd=os.path.join(self.tmp, "seed"))
+            self.sh("git", "push", "-q", "origin", "main", cwd=os.path.join(self.tmp, "seed"))
+            for d in self.dirs.values():
+                self.sh("git", "pull", "-q", cwd=d)
+
     def remote_refs(self, host="mac"):
         return self.git(host, "ls-remote", "origin")
 
@@ -148,6 +159,170 @@ class TwoComputers(unittest.TestCase):
         self.assertEqual(self.read("pc", "new.txt"), "brand new\n")
         self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "")  # nothing staged
         self.assertIn("handoff.unwrapped", self.last_stdout)  # the agent hears about it
+
+    def test_staged_only_edit_is_restored_staged_when_opted_in(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        self.write("mac", "src/one.txt", "one staged\n")
+        self.git("mac", "add", "src/one.txt")
+        before = self.status("mac")
+        self.handoff("mac", "end")
+        self.assertEqual(self.status("mac"), before)
+        ev = self.handoff("pc", "start")
+        self.assertEqual(self.read("pc", "src/one.txt"), "one staged\n")
+        self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "src/one.txt")
+        self.assertIn("staging=restored", self.last_stdout)
+        self.assertEqual(ev["handoff.unwrapped"]["staging"], "restored")
+
+    def test_staged_and_unstaged_files_retain_their_split(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        self.write("mac", "src/one.txt", "one staged\n")
+        self.git("mac", "add", "src/one.txt")
+        self.write("mac", "src/two.txt", "two unstaged\n")
+        self.handoff("mac", "end")
+        self.handoff("pc", "start")
+        self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "src/one.txt")
+        self.assertEqual(self.git("pc", "diff", "--name-only"), "src/two.txt")
+
+    def test_partial_hunks_in_one_file_retain_their_split(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        original = "".join(f"line {n}\n" for n in range(1, 11))
+        self.write("mac", "src/one.txt", original)
+        self.git("mac", "add", "src/one.txt")
+        self.git("mac", "commit", "-qm", "replace test fixture")
+        self.git("mac", "push", "-q", "origin", "HEAD")
+        self.git("pc", "pull", "-q")
+        staged = original.replace("line 1\n", "staged line\n", 1)
+        self.write("mac", "src/one.txt", staged.replace("line 10\n", "unstaged line\n"))
+        subprocess.run(["git", "add", "-p", "src/one.txt"], cwd=self.dirs["mac"],
+                       input="y\nn\n", text=True, capture_output=True, check=True, env=clean_env())
+        self.assertIn("staged line", self.git("mac", "show", ":src/one.txt"))
+        self.assertNotIn("unstaged line", self.git("mac", "show", ":src/one.txt"))
+        self.handoff("mac", "end")
+        self.handoff("pc", "start")
+        self.assertEqual(self.git("pc", "show", ":src/one.txt"), staged.rstrip("\n"))
+        self.assertEqual(self.read("pc", "src/one.txt"), staged.replace("line 10\n", "unstaged line\n"))
+
+    def test_permitted_staged_new_file_remains_staged(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        self.write("mac", "new.txt", "new staged\n")
+        self.git("mac", "add", "new.txt")
+        self.handoff("mac", "end")
+        self.handoff("pc", "start")
+        self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "new.txt")
+        self.assertEqual(self.read("pc", "new.txt"), "new staged\n")
+
+    def test_staged_secret_never_enters_either_bundle_tree(self):
+        self.preserve_staging("mac")
+        self.write("mac", "notes.txt", "token ghp_" + "a" * 36 + "\n")
+        self.git("mac", "add", "notes.txt")
+        self.write("mac", "notes.txt", "safe working copy\n")
+        self.write("mac", "src/two.txt", "safe change\n")
+        ev = self.handoff("mac", "end")
+        self.assertIn("bundle.secrets_skipped", ev)
+        bundle = self.git("mac", "rev-parse", REF)
+        index_commit = self.git("mac", "rev-parse", f"{bundle}^2")
+        for tree in (f"{bundle}^{{tree}}", f"{index_commit}^{{tree}}"):
+            self.assertNotIn("notes.txt", self.git("mac", "ls-tree", "-r", "--name-only", tree))
+
+    def test_oversized_staged_addition_never_enters_either_bundle_tree(self):
+        self.preserve_staging("mac")
+        path = os.path.join(self.dirs["mac"], "large.bin")
+        with open(path, "wb") as f:
+            f.truncate(50 * 1024 * 1024 + 1)
+        self.git("mac", "add", "large.bin")
+        self.write("mac", "src/two.txt", "safe change\n")
+        ev = self.handoff("mac", "end")
+        self.assertIn("bundle.secrets_skipped", ev)
+        bundle = self.git("mac", "rev-parse", REF)
+        index_commit = self.git("mac", "rev-parse", f"{bundle}^2")
+        for tree in (f"{bundle}^{{tree}}", f"{index_commit}^{{tree}}"):
+            self.assertNotIn("large.bin", self.git("mac", "ls-tree", "-r", "--name-only", tree))
+
+    def test_clean_branch_movement_restores_staging_split(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        self.write("mac", "src/one.txt", "one staged\n")
+        self.git("mac", "add", "src/one.txt")
+        self.write("mac", "src/two.txt", "two unstaged\n")
+        self.handoff("mac", "end")
+        self.write("pc", "branch.txt", "branch moved independently\n")
+        self.commit_all("pc", "advance branch")
+        ev = self.handoff("pc", "start")
+        self.assertEqual(ev["handoff.unwrapped"]["staging"], "restored")
+        self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "src/one.txt")
+        self.assertEqual(self.git("pc", "diff", "--name-only"), "src/two.txt")
+        self.assertEqual(self.read("pc", "src/two.txt"), "two unstaged\n")
+
+    def test_committed_final_content_is_not_replaced_by_staged_intermediate(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        self.write("mac", "src/one.txt", "staged intermediate\n")
+        self.git("mac", "add", "src/one.txt")
+        self.write("mac", "src/one.txt", "final content\n")
+        self.handoff("mac", "end")
+        self.write("pc", "src/one.txt", "final content\n")
+        self.commit_all("pc", "commit bundle final content")
+        self.handoff("pc", "start")
+        self.assertEqual(self.read("pc", "src/one.txt"), "final content\n")
+        self.assertEqual(self.status("pc"), "")
+
+    def test_conflicting_branch_movement_flattens_and_reports_staging(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        self.write("mac", "src/one.txt", "one from mac\n")
+        self.git("mac", "add", "src/one.txt")
+        self.handoff("mac", "end")
+        self.write("pc", "src/one.txt", "one from pc\n")
+        self.commit_all("pc", "conflict with bundle")
+        ev = self.handoff("pc", "start")
+        self.assertEqual(ev["unwrap.conflict_markers"]["staging"], "flattened")
+        self.assertIn("<<<<<<<", self.read("pc", "src/one.txt"))
+        self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "")
+        self.assertIn("Staging was flattened", self.last_stdout)
+
+    def test_conflicted_staged_only_delta_remains_recoverable(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        self.write("mac", "src/one.txt", "one staged version\n")
+        self.git("mac", "add", "src/one.txt")
+        self.write("mac", "src/one.txt", "one v1\n")
+        self.write("mac", "src/two.txt", "two from mac\n")
+        self.handoff("mac", "end")
+        self.write("pc", "src/one.txt", "one from pc\n")
+        self.commit_all("pc", "conflict with staged-only delta")
+        ev = self.handoff("pc", "start")
+        self.assertIn("unwrap.conflict_markers", ev)
+        self.assertEqual(ev["unwrap.conflict_markers"]["staging"], "flattened")
+        self.assertIn("<<<<<<<", self.read("pc", "src/one.txt"))
+        self.assertEqual(self.read("pc", "src/two.txt"), "two from mac\n")
+        self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "")
+
+    def test_force_backup_keeps_local_staged_tree_before_replacing_it(self):
+        self.preserve_staging("mac")
+        self.preserve_staging("pc")
+        self.write("mac", "src/one.txt", "one from mac\n")
+        self.git("mac", "add", "src/one.txt")
+        self.handoff("mac", "end")
+        self.write("pc", "src/two.txt", "two staged locally\n")
+        self.git("pc", "add", "src/two.txt")
+        self.assertIn("handoff.conflict", self.handoff("pc", "start"))
+        self.assertIn("handoff.unwrapped", self.handoff("pc", "unwrap", "--force"))
+        self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "src/one.txt")
+        backup = self.git("pc", "for-each-ref", "--format=%(refname)", "refs/worktree-handoff-backup/")
+        index_commit = self.git("pc", "rev-parse", f"{backup}^2")
+        self.assertEqual(self.git("pc", "show", f"{index_commit}:src/two.txt"), "two staged locally")
+
+    def test_staging_is_flattened_by_default(self):
+        self.write("mac", "src/one.txt", "one staged\n")
+        self.git("mac", "add", "src/one.txt")
+        self.handoff("mac", "end")
+        ev = self.handoff("pc", "start")
+        self.assertEqual(self.git("pc", "diff", "--cached", "--name-only"), "")
+        self.assertEqual(ev["handoff.unwrapped"]["staging"], "flattened")
 
     def test_ignored_and_excluded_files_stay_home(self):
         self.write("mac", ".worktree-handoff.json", json.dumps({"exclude": ["chats"]}))

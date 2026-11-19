@@ -14,7 +14,7 @@ CONFIG_FILE = ".worktree-handoff.json"
 
 
 DEFAULTS = {"enabled": True, "exclude": [], "remote": "origin", "tick_minutes": 20,
-            "pull": True, "allow": []}
+            "pull": True, "allow": [], "preserve_staging": False}
 
 
 NET_TIMEOUT = 60        # seconds for any one fetch, pull or push

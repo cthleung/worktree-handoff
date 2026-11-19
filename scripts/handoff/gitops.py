@@ -117,7 +117,7 @@ class Git:
     def head_tree(self) -> str:
         return self.run("rev-parse", "HEAD^{tree}")
 
-    def worktree_tree(self) -> tuple[str, list[dict]]:
+    def worktree_tree(self, held_paths=()) -> tuple[str, list[dict]]:
         """Tree hash of the working tree as it is right now (tracked edits plus untracked,
         .gitignore and the config's excludes respected, secrets and huge new files left out),
         without touching .git/index. Returns the tree and the files the guard held back."""
@@ -127,8 +127,12 @@ class Git:
         self.run("read-tree", "HEAD", env=e)
         self.run("add", "-A", "--", ".", *self.excludes, env=e)
         held = self._guard(e)
+        held_paths = set(held_paths) | {h["path"] for h in held}
         new = [h["path"] for h in held if h["status"] == "A"]
         mods = [h["path"] for h in held if h["status"] == "M"]
+        head_paths = set(self.blobs(self.head_tree()))
+        new += [p for p in held_paths if p not in new and p not in head_paths]
+        mods += [p for p in held_paths if p not in mods and p in head_paths]
         if new:
             self.run("rm", "--cached", "-q", "--", *new, env=e)
         if mods:  # the bundle keeps the committed version of these
@@ -136,6 +140,83 @@ class Git:
         tree = self.run("write-tree", env=e)
         index.unlink(missing_ok=True)
         return tree, held
+
+    def staging_tree(self) -> tuple[str, list[dict]]:
+        """Build a filtered tree of the user's staged contents without changing the real index."""
+        index = self.state_dir / "staging-index"
+        index.unlink(missing_ok=True)
+        e = {"GIT_INDEX_FILE": str(index)}
+        self.run("read-tree", "HEAD", env=e)
+        diff = subprocess.run(
+            ["git", "diff", "--cached", "--binary", "--no-renames", "HEAD", "--", ".", *self.excludes],
+            cwd=self.root, capture_output=True,
+        )
+        if diff.returncode:
+            raise GitError(diff.stderr.decode("utf-8", "replace").strip())
+        ok, msg = self.apply(diff.stdout, "--cached", env=e)
+        if not ok:
+            raise GitError(msg)
+        held = self._guard_index(e)
+        paths = [h["path"] for h in held]
+        if paths:
+            self.run("reset", "-q", "HEAD", "--", *paths, env=e)
+        tree = self.run("write-tree", env=e)
+        index.unlink(missing_ok=True)
+        return tree, held
+
+    def worktree_snapshot(self) -> tuple[str, str, list[dict]]:
+        """Return safe working-tree and index trees plus every path held by either guard."""
+        index_tree, held = self.staging_tree()
+        tree, worktree_held = self.worktree_tree(h["path"] for h in held)
+        by_path = {h["path"]: h for h in held}
+        by_path.update({h["path"]: h for h in worktree_held})
+        return tree, index_tree, list(by_path.values())
+
+    def _guard_index(self, e) -> list[dict]:
+        """Guard staged blobs, rather than reading the possibly different working copy."""
+        out = self.run("diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD", env=e)
+        parts = out.split("\0")
+        entries = self.run("ls-files", "--stage", "-z", env=e).split("\0")
+        blobs = {}
+        for entry in entries:
+            if entry:
+                meta, path = entry.split("\t", 1)
+                mode, oid, stage = meta.split()
+                if stage == "0":
+                    blobs[path] = (oid, mode)
+        held = []
+        for status, path in zip(parts[0::2], parts[1::2], strict=False):
+            status = status[:1]
+            if status not in ("A", "M") or path in set(self.config["allow"]):
+                continue
+            why = secret_name(path)
+            if why:
+                held.append({"path": path, "status": status, "why": f"name looks like a secret ({why})"})
+                continue
+            blob = blobs.get(path)
+            if not blob:
+                continue
+            oid, _ = blob
+            if status == "A":
+                size = int(self.run("cat-file", "-s", oid))
+                if size > MAX_NEW_FILE_MB * 1024 * 1024:
+                    held.append({"path": path, "status": status, "why": f"bigger than {MAX_NEW_FILE_MB} MB"})
+                    continue
+                if size > 1024 * 1024:
+                    continue
+                data = subprocess.run(["git", "cat-file", "blob", oid], cwd=self.root,
+                                      capture_output=True).stdout
+                if b"\0" in data[:8000]:
+                    continue
+                hit = secret_hit(data.decode("utf-8", "replace"))
+            else:
+                added = self.run("diff", "--cached", "-U0", "HEAD", "--", path,
+                                 env=e, check=False)
+                hit = secret_hit("\n".join(line for line in added.splitlines()
+                                           if line.startswith("+") and not line.startswith("+++")))
+            if hit:
+                held.append({"path": path, "status": status, "why": f"content matches {hit}"})
+        return held
 
     def _guard(self, e) -> list[dict]:
         allow = set(self.config["allow"])
@@ -184,24 +265,37 @@ class Git:
         return [{"status": s[:1], "path": p}
                 for s, p in zip(parts[0::2], parts[1::2], strict=False) if s]
 
+    def staged_changes(self) -> list[dict]:
+        out = self.run("diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD")
+        parts = out.split("\0")
+        return [{"status": s[:1], "path": p}
+                for s, p in zip(parts[0::2], parts[1::2], strict=False) if s]
+
     def shortstat(self, tree_a, tree_b) -> dict:
         return {"shortstat": self.run("diff", "--shortstat", tree_a, tree_b).strip()}
 
-    def commit_tree(self, tree, parent, message) -> str:
-        return self.run("commit-tree", tree, "-p", parent, "-m", message)
+    def commit_tree(self, tree, parent, message, parent2=None) -> str:
+        args = ["commit-tree", tree, "-p", parent]
+        if parent2:
+            args += ["-p", parent2]
+        return self.run(*args, "-m", message)
 
     # patches travel as raw bytes: a stripped or re-encoded patch is a corrupt patch
-    def patch(self, tree_a, tree_b, exclude=()) -> bytes:
-        args = ["git", "diff", "--binary", "--no-renames", tree_a, tree_b, "--", "."]
+    def patch(self, tree_a, tree_b, exclude=(), include=()) -> bytes:
+        paths = [f":(literal){p}" for p in include] if include else ["."]
+        args = ["git", "diff", "--binary", "--no-renames", tree_a, tree_b, "--", *paths]
         args += [f":(exclude){p}" for p in exclude]
         out = subprocess.run(args, cwd=self.root, capture_output=True)
         if out.returncode:
             raise GitError(out.stderr.decode("utf-8", "replace").strip())
         return out.stdout
 
-    def apply(self, patch: bytes, *flags) -> tuple[bool, str]:
+    def apply(self, patch: bytes, *flags, env=None) -> tuple[bool, str]:
+        if not patch:
+            return True, ""
+        full_env = {**os.environ, **(env or {})}
         out = subprocess.run(["git", "apply", "--whitespace=nowarn", *flags],
-                             cwd=self.root, capture_output=True, input=patch)
+                             cwd=self.root, capture_output=True, input=patch, env=full_env)
         msg = (out.stderr or out.stdout).decode("utf-8", "replace").strip()
         return out.returncode == 0, msg
 
@@ -218,10 +312,17 @@ class Git:
     def revert_to_head(self, cur_tree) -> str:
         """Put the working tree back to HEAD, keeping a backup ref of what it held."""
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        index_commit = None
+        if self.config["preserve_staging"]:
+            index_commit = self.commit_tree(self.run("write-tree"), self.head(),
+                                            f"worktree-handoff index backup of {host_name()} at {stamp}")
         backup = self.commit_tree(cur_tree, self.head(),
-                                  f"worktree-handoff backup of {host_name()} at {stamp}")
+                                  f"worktree-handoff backup of {host_name()} at {stamp}",
+                                  parent2=index_commit)
         name = f"{BACKUP_PREFIX}{stamp}"
         self.run("update-ref", name, backup)
+        if index_commit:
+            self.run("reset", "-q", "HEAD")
         ok, msg = self.apply(self.patch(cur_tree, self.head_tree()))
         if not ok:
             raise GitError(f"could not revert the tree to HEAD: {msg}")
@@ -232,13 +333,16 @@ class Git:
         if not commit:
             return None
         raw = self.run("log", "-1", "--format=%H%n%T%n%P%n%ct%n%B", commit)
-        commit, tree, parent, ctime, *body = raw.split("\n", 4)
+        commit, tree, parent_text, ctime, *body = raw.split("\n", 4)
+        parent_list = parent_text.split()
+        parent = parent_list[0] if parent_list else ""
+        index_tree = self.rev(f"{parent_list[1]}^{{tree}}") if len(parent_list) > 1 else None
         first = (body[0] if body else "").splitlines()[0] if body and body[0] else ""
         # "wip from HOST at TIME"
         host = first.split(" from ", 1)[1].split(" at ", 1)[0] if " from " in first else "?"
         when = first.split(" at ", 1)[1] if " at " in first else "?"
-        return {"commit": commit, "tree": tree, "parent": parent, "time": int(ctime),
-                "host": host, "when": when, "ref": ref}
+        return {"commit": commit, "tree": tree, "parent": parent, "index_tree": index_tree,
+                "time": int(ctime), "host": host, "when": when, "ref": ref}
 
     # state, per branch
     @property

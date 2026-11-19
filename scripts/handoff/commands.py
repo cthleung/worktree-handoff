@@ -41,7 +41,12 @@ def push(g: Git, log, refspec: str, what: str) -> bool:
 def cmd_end(g: Git, log) -> int:
     """Bundle the working tree and push it."""
     head, head_tree = g.head(), g.head_tree()
-    tree, held = g.worktree_tree()
+    preserve_staging = g.config["preserve_staging"]
+    if preserve_staging:
+        tree, index_tree, held = g.worktree_snapshot()
+    else:
+        tree, held = g.worktree_tree()
+        index_tree = None
     state = g.load_state()
     log = log.bind(head=head[:10], branch=g.branch())
     if held:
@@ -49,34 +54,41 @@ def cmd_end(g: Git, log) -> int:
                     detail="left out of the bundle; add a path to \"allow\" in "
                            f"{CONFIG_FILE} if it's safe to carry")
 
-    if tree == head_tree:
+    if tree == head_tree and (index_tree is None or index_tree == head_tree):
         log.info("tree.clean", detail="nothing uncommitted to carry")
         remote = g.read_bundle(g.ref)
         if remote and remote["host"] == host_name():
             ok, msg = g.try_run("push", "-q", g.remote, f":{g.ref}", timeout=NET_TIMEOUT)
             g.run("update-ref", "-d", g.ref)
-            g.save_state(sent=None, sent_tree=None, pushed=True)
+            g.save_state(sent=None, sent_tree=None, sent_index_tree=None, pushed=True)
             log.info("bundle.dropped", reason="our work is all committed now, so our old "
                      "bundle would be stale on the other computer", remote_deleted=ok)
         return 0
 
     changes = g.changes(head_tree, tree)
     files = summarize(changes)
-    if state.get("sent_tree") == tree and state.get("pushed"):
+    if (state.get("sent_tree") == tree and state.get("sent_index_tree") == index_tree
+            and state.get("pushed")):
         log.info("bundle.unchanged", detail="same tree as the last bundle we pushed",
-                 bundle=(state.get("sent") or "")[:10], count=files["count"])
+                 bundle=(state.get("sent") or "")[:10], count=files["count"],
+                 staging="included" if index_tree is not None else "flattened")
         return 0
 
     when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [f"wip from {host_name()} at {when}", "", f"parent {head[:10]} on {g.branch()}",
              f"{files['count']} files", ""]
     lines += [f"{c['status']} {c['path']}" for c in changes]
-    commit = g.commit_tree(tree, head, "\n".join(lines))
+    index_commit = (g.commit_tree(index_tree, head, f"worktree-handoff index from {host_name()}")
+                    if index_tree is not None else None)
+    commit = g.commit_tree(tree, head, "\n".join(lines), parent2=index_commit)
     g.run("update-ref", g.ref, commit)
-    log.info("bundle.made", bundle=commit[:10], tree=tree[:10], **files, **g.shortstat(head_tree, tree))
+    log.info("bundle.made", bundle=commit[:10], tree=tree[:10],
+             staging="included" if index_tree is not None else "flattened",
+             **files, **g.shortstat(head_tree, tree))
 
     ok = push(g, log, f"{g.ref}:{g.ref}", "bundle")
-    g.save_state(sent=commit, sent_tree=tree, sent_time=int(time.time()), pushed=ok)
+    g.save_state(sent=commit, sent_tree=tree, sent_index_tree=index_tree,
+                 sent_time=int(time.time()), pushed=ok)
     if ok:
         log.info("bundle.pushed", bundle=commit[:10], remote=g.remote, ref=g.ref)
     return 0
@@ -154,11 +166,23 @@ def decide(g: Git, log, remember: bool = True) -> dict:
     `status` only shows it."""
     me = host_name()
     head, head_tree = g.head(), g.head_tree()
-    cur, held = g.worktree_tree()
+    preserve_staging = g.config["preserve_staging"]
+    if preserve_staging:
+        cur, index_tree, held = g.worktree_snapshot()
+    else:
+        cur, held = g.worktree_tree()
+        index_tree = None
+    staged_changes = g.staged_changes() if preserve_staging else []
     state = g.load_state()
     dirty = g.changes(head_tree, cur)
+    if index_tree is not None:
+        by_path = {c["path"]: c for c in dirty}
+        for change in g.changes(head_tree, index_tree) + staged_changes:
+            by_path.setdefault(change["path"], change)
+        dirty = list(by_path.values())
     log = log.bind(head=head[:10], branch=g.branch())
-    plan: dict[str, Any] = {"action": "nothing", "cur": cur, "head": head, "head_tree": head_tree,
+    plan: dict[str, Any] = {"action": "nothing", "cur": cur, "index_tree": index_tree,
+            "staged_paths": [c["path"] for c in staged_changes], "head": head, "head_tree": head_tree,
             "dirty": summarize(dirty), "state": state, "held": held}
 
     log.info("tree.dirty" if dirty else "tree.clean", **(plan["dirty"] if dirty else {}))
@@ -180,11 +204,20 @@ def decide(g: Git, log, remember: bool = True) -> dict:
     if state.get("applied") == remote["commit"]:
         plan["action"] = "already_applied"
         return plan
-    if cur == remote["tree"]:
+    same_worktree = cur == remote["tree"]
+    same_index = (index_tree == remote["index_tree"] if preserve_staging and remote["index_tree"]
+                  else not preserve_staging or not remote["index_tree"])
+    if same_worktree and same_index:
         plan["action"] = "already_identical"
         return plan
 
-    ours_stale = bool(dirty) and state.get("sent_tree") == cur
+    filtered_stage_paths = ({c["path"] for c in g.changes(head_tree, index_tree)}
+                            if index_tree is not None else set())
+    raw_stage_paths = {c["path"] for c in staged_changes}
+    ours_stale = (bool(dirty) and state.get("sent_tree") == cur
+                  and (not preserve_staging or (
+                      state.get("sent_index_tree") == index_tree
+                      and raw_stage_paths == filtered_stage_paths)))
     if dirty and not ours_stale:
         plan["action"] = "conflict"
         plan["why"] = ("this computer has uncommitted edits that are not the bundle it last "
@@ -248,8 +281,13 @@ def cmd_start(g: Git, log) -> int:
 
     if action in ("already_applied", "already_identical"):
         g.save_state(applied=remote["commit"])
+        staging = ("already present" if action == "already_identical" and g.config["preserve_staging"]
+                   and remote["index_tree"] else "previously handled")
         log.info("bundle.already_here", bundle=remote["commit"][:10], from_host=remote["host"],
-                 how="recorded as applied" if action == "already_applied" else "tree matches it")
+                 how="recorded as applied" if action == "already_applied" else "tree matches it",
+                 staging=staging,
+                 agent=f"The bundle is already present or was already applied; no files changed. "
+                       f"Staging status: {staging}.")
         _pull(g, log)
         return 0
 
@@ -260,10 +298,12 @@ def cmd_start(g: Git, log) -> int:
         log.error("handoff.conflict", why=plan["why"], local=plan["dirty"],
                   bundle=remote["commit"][:10], from_host=remote["host"],
                   bundled_at=remote["when"], bundle_files=summarize(bundle_changes), overlap=overlap,
+                  staging="skipped (local conflict)",
                   agent="Nothing was changed. Tell the user before editing: show them the "
                         "local files, the bundle's files and the overlap, and offer "
                         "`worktree-handoff unwrap --force` (backs up the local tree to "
-                        f"{BACKUP_PREFIX}<time> first) or keeping local and `worktree-handoff drop`.")
+                        f"{BACKUP_PREFIX}<time> first) or keeping local and `worktree-handoff drop`. "
+                        "Staging was not restored.")
         return 0
 
     return _unwrap(g, log, plan)
@@ -273,7 +313,8 @@ def _unwrap(g: Git, log, plan, force=False) -> int:
     remote, cur, head_tree = plan["remote"], plan["cur"], plan["head_tree"]
     log = log.bind(bundle=remote["commit"][:10], from_host=remote["host"])
 
-    if cur != head_tree:
+    has_staged_edits = g.config["preserve_staging"] and bool(plan["staged_paths"])
+    if cur != head_tree or has_staged_edits:
         backup = g.revert_to_head(cur)
         log.info("tree.reverted_to_head", backup_ref=backup,
                  reason="forced over local edits" if force else
@@ -285,6 +326,40 @@ def _unwrap(g: Git, log, plan, force=False) -> int:
     return _apply_bundle(g, log, remote)
 
 
+def _apply_flattened_staging(g: Git, remote: dict, already: list[str],
+                             moved: bool) -> tuple[bool, str, list[str]]:
+    """Apply both deltas by path, retaining unrelated files when one path conflicts."""
+    flags = ["--3way"] if moved else []
+    stage_paths = [c["path"] for c in g.changes(remote["parent"], remote["index_tree"])
+                   if c["path"] not in already]
+    unstaged_paths = [c["path"] for c in g.changes(remote["index_tree"], remote["tree"])
+                      if c["path"] not in already]
+    failed, errors = set(), []
+    for path in stage_paths:
+        patch = g.patch(remote["parent"], remote["index_tree"], include=[path])
+        ok, msg = g.apply(patch, *flags)
+        if not ok:
+            failed.add(path)
+            errors.append(msg)
+            if moved:
+                failed.update(g.run("diff", "--name-only", "--diff-filter=U").splitlines())
+                g.run("reset", "-q")
+    for path in unstaged_paths:
+        if path in failed:
+            continue
+        patch = g.patch(remote["index_tree"], remote["tree"], include=[path])
+        ok, msg = g.apply(patch, *flags)
+        if not ok:
+            failed.add(path)
+            errors.append(msg)
+            if moved:
+                failed.update(g.run("diff", "--name-only", "--diff-filter=U").splitlines())
+                g.run("reset", "-q")
+    if moved:
+        g.run("reset", "-q")
+    return not failed, "\n".join(errors), sorted(failed)
+
+
 def _apply_bundle(g: Git, log, remote, note="") -> int:
     """Apply a bundle's changes onto a working tree that is clean at HEAD. Files the
     bundle has in the same state as HEAD already (work that got committed in the
@@ -293,15 +368,92 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
     head, head_tree = g.head(), g.head_tree()
     head_blobs, bundle_blobs = g.blobs(head_tree), g.blobs(remote["tree"])
     bundle_changes = g.changes(remote["parent"], remote["tree"])
-    already = [c["path"] for c in bundle_changes if bundle_blobs.get(c["path"]) == head_blobs.get(c["path"])]
+    preserve_staging = g.config["preserve_staging"] and remote["index_tree"] is not None
+    already = [c["path"] for c in bundle_changes
+               if bundle_blobs.get(c["path"]) == head_blobs.get(c["path"])]
     todo = [c for c in bundle_changes if c["path"] not in already]
     files = summarize(todo)
+    index_changes = (g.changes(remote["parent"], remote["index_tree"])
+                     if preserve_staging else [])
+    staged_todo = [c for c in index_changes if c["path"] not in already]
+
+    if preserve_staging and (todo or staged_todo):
+        moved = remote["parent"] != head
+        how = ("plain apply" if not moved else
+               f"3-way apply (the branch moved from {remote['parent'][:10]} to {head[:10]})")
+        stage_patch = g.patch(remote["parent"], remote["index_tree"], exclude=already)
+        unstaged_patch = g.patch(remote["index_tree"], remote["tree"], exclude=already)
+        flags = ["--cached"] + (["--3way"] if moved else [])
+        ok, msg = g.apply(stage_patch, *flags)
+        if not ok:
+            g.run("reset", "-q")
+            ok, msg, unmerged = _apply_flattened_staging(g, remote, already, moved)
+            if not ok:
+                if moved:
+                    g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
+                    log.error("unwrap.conflict_markers", how=how, note=note,
+                              error=msg.splitlines()[-1] if msg else "", files_with_markers=unmerged,
+                              skipped_already_committed=already, staging="flattened", **files,
+                              agent="The bundle is in the tree but these files have <<<<<<< markers. "
+                                    "Staging was flattened. Tell the user and resolve them together "
+                                    "before other edits.")
+                    return 0
+                log.error("unwrap.blocked", error=msg, staging="skipped",
+                          agent="Nothing was changed. Staging was not restored; tell the user.")
+                return 0
+            if moved:
+                g.run("reset", "-q")
+            g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
+            log.info("handoff.unwrapped", how=how, note=note, bundled_at=remote["when"],
+                     staging="flattened (index patch did not apply)", **files,
+                     staged_files=summarize(staged_todo), skipped_already_committed=already,
+                     **g.shortstat(remote["parent"], remote["tree"]),
+                     agent="These files are now uncommitted edits in the working tree. "
+                           "Staging could not be restored, so all edits are unstaged. Tell the "
+                           "user which files came over.")
+            return 0
+
+        staged_tree = g.run("write-tree")
+        if moved:
+            g.run("reset", "-q")
+        ok, msg = g.apply(stage_patch, *(["--3way"] if moved else []))
+        if ok:
+            ok, msg = g.apply(unstaged_patch, *(["--3way"] if moved else []))
+        if not ok:
+            if moved:
+                unmerged = g.run("diff", "--name-only", "--diff-filter=U").splitlines()
+                g.run("reset", "-q")
+                g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
+                log.error("unwrap.conflict_markers", how=how, note=note,
+                          error=msg.splitlines()[-1] if msg else "", files_with_markers=unmerged,
+                          skipped_already_committed=already, staging="flattened", **files,
+                          agent="The bundle is in the tree but these files have <<<<<<< markers. "
+                                "Staging was flattened. Tell the user and resolve them together "
+                                "before other edits.")
+                return 0
+            g.run("reset", "-q")
+            log.error("unwrap.failed", how=how, error=msg, staging="skipped",
+                      agent="Nothing was changed. Staging was not restored; tell the user.")
+            return 0
+
+        g.run("read-tree", staged_tree)
+        g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
+        log.info("handoff.unwrapped", how=how, note=note, bundled_at=remote["when"],
+                 staging="restored", staged_files=summarize(staged_todo), **files,
+                 skipped_already_committed=already, **g.shortstat(remote["parent"], remote["tree"]),
+                 agent="These files are now uncommitted edits in the working tree, carried over "
+                       "from the other computer. Their staged and unstaged split was restored. "
+                       "Tell the user which files came over.")
+        return 0
 
     if not todo:
-        g.save_state(applied=remote["commit"], sent_tree=None)
+        g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
         log.info("bundle.already_in_main", bundled_at=remote["when"], files=already,
+                 staging="skipped (already committed)",
                  detail="every file in the bundle already matches HEAD, so there's nothing "
-                        "uncommitted to bring back")
+                        "uncommitted to bring back",
+                 agent="The bundle's changes are already in HEAD, so nothing was restored. "
+                       "Staging was skipped.")
         return 0
 
     patch = g.patch(remote["parent"], remote["tree"], exclude=already)
@@ -309,7 +461,8 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
         how = "plain apply (bundle parent is HEAD)"
         ok, msg = g.apply(patch, "--check")
         if not ok:
-            log.error("unwrap.blocked", error=msg, agent="Nothing was changed. Tell the user.")
+            log.error("unwrap.blocked", error=msg, staging="skipped",
+                      agent="Nothing was changed. Staging was not restored; tell the user.")
             return 0
         ok, msg = g.apply(patch)
     else:
@@ -321,20 +474,24 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
             g.save_state(applied=remote["commit"], sent_tree=None)
             log.error("unwrap.conflict_markers", how=how, note=note,
                       error=msg.splitlines()[-1] if msg else "", files_with_markers=unmerged,
-                      skipped_already_committed=already, **files,
+                      skipped_already_committed=already, staging="flattened", **files,
                       agent="The bundle is in the tree but these files have <<<<<<< markers. "
-                            "Tell the user and resolve them together before other edits.")
+                            "Staging was flattened. Tell the user and resolve them together "
+                            "before other edits.")
             return 0
         g.run("reset", "-q")
     if not ok:
-        log.error("unwrap.failed", how=how, error=msg, agent="Tell the user.")
+        log.error("unwrap.failed", how=how, error=msg, staging="skipped",
+                  agent="Nothing was changed. Staging was not restored; tell the user.")
         return 0
 
-    g.save_state(applied=remote["commit"], sent_tree=None)
+    g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
     log.info("handoff.unwrapped", how=how, note=note, bundled_at=remote["when"], **files,
              skipped_already_committed=already, **g.shortstat(remote["parent"], remote["tree"]),
+             staging="flattened",
              agent="These files are now uncommitted edits in the working tree, carried over "
-                   "from the other computer. Tell the user which files came over.")
+                   "from the other computer. All edits are unstaged. Tell the user which files "
+                   "came over.")
     return 0
 
 
@@ -342,7 +499,8 @@ def cmd_unwrap(g: Git, log, force: bool) -> int:
     plan = decide(g, log)
     if plan["action"] == "unwrap" or (force and plan.get("remote")):
         return _unwrap(g, log, plan, force=force)
-    log.info("unwrap.skipped", action=plan["action"], why=plan.get("why", ""))
+    log.info("unwrap.skipped", action=plan["action"], why=plan.get("why", ""),
+             staging="skipped", agent="No bundle changes were applied; staging was not restored.")
     return 0
 
 
@@ -363,6 +521,6 @@ def cmd_drop(g: Git, log) -> int:
     ok, msg = g.try_run("push", "-q", g.remote, f":{g.ref}", timeout=NET_TIMEOUT)
     if g.rev(g.ref):
         g.run("update-ref", "-d", g.ref)
-    g.save_state(sent=None, sent_tree=None, pushed=True)
+    g.save_state(sent=None, sent_tree=None, sent_index_tree=None, pushed=True)
     log.info("bundle.dropped", ref=g.ref, remote_deleted=ok, note="" if ok else msg)
     return 0
