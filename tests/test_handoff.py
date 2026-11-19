@@ -247,6 +247,15 @@ class TwoComputers(unittest.TestCase):
 
     # ------------------------------------------------------------ branches
 
+    def test_printed_lines_name_the_repo(self):
+        """Several repos can use the plugin, so what the agent sees says which one."""
+        self.write("mac", "src/one.txt", "one mac\n")
+        self.handoff("mac", "end")
+        ev = self.handoff("pc", "start")
+        self.assertIn("worktree-handoff [pc]: ", self.last_stdout)
+        self.assertTrue(ev["handoff.unwrapped"]["agent"].startswith("This is the pc repo. "))
+        self.assertEqual(ev["handoff.unwrapped"]["repo"], "pc")
+
     def test_each_branch_gets_its_own_bundle(self):
         self.git("mac", "checkout", "-qb", "feature/x")
         self.git("mac", "push", "-q", "-u", "origin", "feature/x")
