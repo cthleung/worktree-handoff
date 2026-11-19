@@ -136,3 +136,15 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **Once per folder:** The record lives in each folder's own git directory, so a brand-new side folder still hears about `main`'s bundle from the other computer, once.
 
 **How I know it works:** All 46 tests pass locally, and so do ruff and mypy at the versions CI pins. The side-folder test also checks that the main folder next door, and `main`'s bundle, stay as they were.
+
+## 16. Naming the repo, and the key that stopped every update
+
+**What was wrong:** I use the plugin in several repos now, and a startup line only said which branch a bundle was for, so "work came over on `main`" could mean any of them. While checking that, I found out the installed copy on my Mac was still the very first version. Claude Code's plugin loader rejects the `displayName` key in the manifest, and it logged that error on every start, while `claude plugin validate` only ever warned about it. So auto-update had quietly kept both computers on the first release, #12 included.
+
+**What I did:** The `displayName` key is gone. Every printed line now starts with the repo's folder name (`worktree-handoff [notes]: ...`), every `agent` instruction opens with "This is the notes repo.", and every log event carries a `repo` field. The skill tells the agent to name the repo when it reports anything, and the README's example is a fresh real run.
+
+**Decisions worth a note:**
+- **The folder name, not the remote's name:** it's what the editor shows, and it's what I'd say out loud. Two clones of one repo in different folders get told apart too.
+- **Added at the logger:** the prefix and the agent sentence both come from the logger's context, so every event gets them without touching each message.
+
+**How I know it works:** A new test checks the prefix, the agent sentence and the log field. All 47 tests pass locally, plus ruff, mypy and `claude plugin validate`, and the debug log is the place to check that the manifest error stops once this is installed.
