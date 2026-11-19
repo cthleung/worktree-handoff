@@ -87,7 +87,7 @@ def main(argv) -> int:
 
     log_path = Path(env("LOG") or g.state_dir / "handoff.log")
     log = Log(log_path, verbose=by_hand or bool(env("VERBOSE")),
-              context={"command": command, "host": host_name(), "pid": os.getpid()})
+              context={"repo": root.name, "command": command, "host": host_name(), "pid": os.getpid()})
 
     if not g.branch():
         log.info("skip.detached", detail="HEAD is detached, so there's no branch to hand off")
@@ -121,7 +121,7 @@ def main(argv) -> int:
         log.info("lock.busy", detail="another handoff ran past the wait; this one steps aside")
         return 0
     try:
-        log.info("run.begin", repo=str(g.root), branch=g.branch())
+        log.info("run.begin", path=str(g.root), branch=g.branch())
         if command in ("end", "tick"):
             return cmd_end(g, log)
         if command == "start":

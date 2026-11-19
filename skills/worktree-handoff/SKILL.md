@@ -1,6 +1,6 @@
 ---
 name: worktree-handoff
-description: Handles worktree-handoff events and commands. Use when the session's startup context has lines starting "worktree-handoff:" (an unwrap, a conflict, conflict markers, a clean tree holding this computer's old bundle, bundles on other branches, a skipped run), or when the user asks about moving uncommitted work between computers, what came over from the other computer, the handoff log, or running worktree-handoff status, unwrap, or drop.
+description: Handles worktree-handoff events and commands. Use when the session's startup context has lines starting "worktree-handoff [REPO]:" or "worktree-handoff:" (an unwrap, a conflict, conflict markers, a clean tree holding this computer's old bundle, bundles on other branches, a skipped run), or when the user asks about moving uncommitted work between computers, what came over from the other computer, the handoff log, or running worktree-handoff status, unwrap, or drop.
 ---
 
 # worktree-handoff
@@ -17,7 +17,7 @@ The `worktree-handoff` command is on the Bash tool's PATH while the plugin is en
 
 ## When the startup context reports an event
 
-Every printed event carries an `agent` field. Follow it. In short:
+Every printed line names its repo (`worktree-handoff [my-app]: ...`), and its `agent` field starts with "This is the my-app repo." Several repos can use the plugin at once, so always say which repo when you tell the user about an event ("2 files came over from your laptop in my-app"). Follow the `agent` field. In short:
 
 | Event | What to do |
 |---|---|

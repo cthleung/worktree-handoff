@@ -12,7 +12,7 @@ Behind the scenes, closing a chat saves a snapshot of your uncommitted files (I 
 
 ## What it looks like
 
-A real run between 2 throwaway clones (I wrapped the log line to fit):
+A real run between 2 throwaway clones of a repo called `notes` (I wrapped the log line to fit):
 
 ```console
 # on the laptop: the chat closes, the bundle is pushed, nothing is printed
@@ -20,18 +20,18 @@ $ worktree-handoff end
 
 # on the desktop: a chat opens
 $ worktree-handoff start
-worktree-handoff: 2026-11-03 03:23:51 [info] handoff.unwrapped  from_host=laptop host=desktop
+worktree-handoff [notes]: 2026-11-19 16:06:41 [info] handoff.unwrapped  from_host=laptop host=desktop
     added=['ideas.md'] modified=['notes.md'] shortstat='2 files changed, 2 insertions(+)'
     how='plain apply (bundle parent is HEAD)'
-    agent='These files are now uncommitted edits in the working tree, carried over from the
-           other computer. Tell the user which files came over.'
+    agent='This is the notes repo. These files are now uncommitted edits in the working tree,
+           carried over from the other computer. Tell the user which files came over.'
 
 $ git status --short
  M notes.md
 ?? ideas.md
 ```
 
-That log line only prints when something came over. Claude reads it from the session's startup context and opens the chat with something like "2 files came over from your laptop: notes.md and ideas.md", so you hear about it right in the conversation. A normal start, with nothing to carry, prints nothing.
+That log line only prints when something came over. Claude reads it from the session's startup context and opens the chat with something like "2 files came over from your laptop: notes.md and ideas.md", so you hear about it right in the conversation. A normal start, with nothing to carry, prints nothing. The `[notes]` at the start is the repo's folder name, since several repos can use the plugin at once.
 
 ## Install
 
