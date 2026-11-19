@@ -1,4 +1,4 @@
-"""What each command does: bundle (end, tick), unwrap (start), status, unwrap, drop."""
+"""What each command does: bundle (end, tick), unwrap (start), switch, status, unwrap, drop."""
 
 from __future__ import annotations
 
@@ -166,12 +166,21 @@ def decide(g: Git, log, remember: bool = True) -> dict:
         log.info("tree.secrets_held", files=held)
 
     remote = _fetch(g, log, remember)
+    parked = state.get("parked")
+    if not remote and not dirty and parked and state.get("sent") == parked and g.rev(parked):
+        # parked while offline: the bundle never reached the remote, so the fetch's --prune
+        # dropped the local ref. The commit is still here; put the ref back.
+        g.run("update-ref", g.ref, parked)
+        remote = g.read_bundle(g.ref)
     plan["remote"] = remote
     if not remote:
         plan["action"] = "push_ours" if state.get("sent") and not state.get("pushed") else "pull_only"
         return plan
 
     if remote["host"] == me:
+        if not dirty and parked == remote["commit"]:
+            plan["action"] = "unpark"
+            return plan
         plan["action"] = "resume_own" if dirty else "own_bundle_but_clean"
         if not state.get("pushed") and state.get("sent") and state["sent"] != remote["commit"]:
             plan["action"] = "push_ours"
@@ -236,6 +245,14 @@ def cmd_start(g: Git, log) -> int:
         _apply_bundle(g, log, remote, note="re-applying this computer's own bundle after the pull")
         return 0
 
+    if action == "unpark":
+        if not state.get("pushed"):
+            ok = push(g, log, f"{g.ref}:{g.ref}", "bundle")
+            g.save_state(pushed=ok)
+        _pull(g, log)
+        _unpark(g, log, remote, note="this branch's work, parked by `worktree-handoff switch`")
+        return 0
+
     if action == "own_bundle_but_clean":
         log.warning("resume.own_bundle_tree_clean", bundle=remote["commit"][:10],
                     bundled_at=remote["when"],
@@ -285,7 +302,14 @@ def _unwrap(g: Git, log, plan, force=False) -> int:
     return _apply_bundle(g, log, remote)
 
 
-def _apply_bundle(g: Git, log, remote, note="") -> int:
+UNWRAPPED_AGENT = ("These files are now uncommitted edits in the working tree, carried over "
+                   "from the other computer. Tell the user which files came over.")
+UNPARKED_AGENT = ("This branch's own parked work is back in the working tree as uncommitted "
+                  "edits. Tell the user which files came back.")
+
+
+def _apply_bundle(g: Git, log, remote, note="", event="handoff.unwrapped",
+                  agent=UNWRAPPED_AGENT) -> int:
     """Apply a bundle's changes onto a working tree that is clean at HEAD. Files the
     bundle has in the same state as HEAD already (work that got committed in the
     meantime) are left out of the patch. If the branch moved on since the bundle's parent
@@ -331,11 +355,80 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
         return 0
 
     g.save_state(applied=remote["commit"], sent_tree=None)
-    log.info("handoff.unwrapped", how=how, note=note, bundled_at=remote["when"], **files,
+    log.info(event, how=how, note=note, bundled_at=remote["when"], **files,
              skipped_already_committed=already, **g.shortstat(remote["parent"], remote["tree"]),
-             agent="These files are now uncommitted edits in the working tree, carried over "
-                   "from the other computer. Tell the user which files came over.")
+             agent=agent)
     return 0
+
+
+def _unpark(g: Git, log, bundle, note):
+    """Bring this computer's own parked bundle back into a tree that's clean at HEAD. When
+    it comes back whole, the state records it as our last sent bundle, so the next `end`
+    doesn't push the same thing again."""
+    pushed = g.load_state().get("pushed", False)
+    _apply_bundle(g, log, bundle, note=note, event="handoff.unparked", agent=UNPARKED_AGENT)
+    back, _ = g.worktree_tree()
+    if back == bundle["tree"]:
+        g.save_state(parked=None, applied=None, sent=bundle["commit"], sent_tree=bundle["tree"],
+                     pushed=pushed)
+    else:
+        g.save_state(parked=None)
+
+
+def cmd_switch(g: Git, log, args: list[str]) -> int:
+    """Switch branches without carrying unfinished work across. This branch's uncommitted
+    work is parked in its own bundle (pushed, so the other computer can pick it up too),
+    the files that went into the bundle go back to HEAD, git switches, and the new branch
+    gets back whatever it had parked, or whatever the other computer left on it. Files the
+    bundle leaves out (excludes, held-back secrets, huge new files) stay where they are, so
+    nothing that isn't safe in a bundle gets wiped. If git refuses the switch, the parked
+    work goes straight back."""
+    create = bool(args) and args[0] in ("-c", "--create")
+    names = args[1:] if create else args
+    if not names or len(names) > (2 if create else 1):
+        log.error("switch.usage", detail="worktree-handoff switch BRANCH, or switch -c NEW [START]")
+        return 2
+    target, start_point = names[0], (names[1] if len(names) > 1 else None)
+    here = g.branch()
+    if target == here:
+        log.info("switch.already_there", branch=here)
+        return 0
+
+    head_tree = g.head_tree()
+    cur, _ = g.worktree_tree()
+    parked = None
+    if cur != head_tree:
+        cmd_end(g, log)
+        bundle = g.read_bundle(g.ref)
+        if not bundle or bundle["tree"] != cur:
+            log.error("switch.not_parked", branch=here,
+                      detail="the work here couldn't be bundled, so nothing was switched",
+                      agent="Tell the user; nothing was changed.")
+            return 0
+        g.save_state(parked=bundle["commit"])
+        backup = g.revert_to_head(cur)
+        parked = bundle
+        log.info("switch.parked", branch=here, bundle=bundle["commit"][:10], backup_ref=backup,
+                 pushed=g.load_state().get("pushed", False), **summarize(g.changes(head_tree, cur)))
+
+    if not create and not g.rev(f"refs/heads/{target}"):
+        # a branch that's only on the remote needs a fetch before git can check it out
+        g.try_run("fetch", "-q", g.remote, timeout=NET_TIMEOUT)
+    cmd = ["switch", "-q", "-c", target, *([start_point] if start_point else [])] if create \
+        else ["switch", "-q", target]
+    ok, msg = g.try_run(*cmd)
+    if not ok:
+        if parked:
+            _unpark(g, log, parked, note="putting this branch's work back after git refused the switch")
+        log.error("switch.refused", from_branch=here, to_branch=target,
+                  error=msg.splitlines()[-1] if msg else "",
+                  detail="git wouldn't switch, so this branch's work is back as it was",
+                  agent="Nothing moved. Tell the user what git said.")
+        return 0
+
+    log.info("switch.done", from_branch=here, to_branch=g.branch(),
+             parked=parked["commit"][:10] if parked else None)
+    return cmd_start(g, log)
 
 
 def cmd_unwrap(g: Git, log, force: bool) -> int:

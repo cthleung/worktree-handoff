@@ -112,7 +112,13 @@ git worktree add ../myrepo-side -b side/my-task
 
 A chat in that folder works like any other. Its bundle goes to `refs/worktree-handoff/side/my-task`, and its state lives in that folder's own git directory, so your main folder and `main`'s bundle are left alone. The other computer mentions the side branch's bundle once, then stays quiet about it until it goes away and comes back.
 
-Keep the folder outside the repo's folder, or the main folder would try to bundle it as new files. An autonomous run counts as one long reply, so the heartbeat rarely fires during it, which means the task should commit and push its branch as it goes.
+Keep the folder outside the repo's folder, or the main folder would try to bundle it as new files. If you'd rather keep one folder, `worktree-handoff switch side/my-task` moves that folder between branches, and each branch keeps its own parked work (see [Switching branches](#switching-branches)). An autonomous run counts as one long reply, so the heartbeat rarely fires during it, which means the task should commit and push its branch as it goes.
+
+## Switching branches
+
+Git and your editor make you stash or carry uncommitted changes when you switch branches. Ask Claude to switch instead, or run `worktree-handoff switch BRANCH` yourself, and the plugin parks this branch's uncommitted work in its bundle, puts those files back to the last commit, switches, and brings back whatever the new branch had parked. The parked work is pushed like any bundle, so the other computer can pick it up too, and a chat that opens later on that branch brings it back by itself.
+
+Files the bundle leaves out stay in the folder as they are, so excluded paths and held-back secrets are never wiped. If one of them differs on the other branch, git refuses the switch and everything goes back as it was. Git has no hook that runs before a switch, so a switch from your editor's branch picker still carries changes across the way it always did.
 
 ## Configure
 
@@ -141,6 +147,7 @@ The hooks run these for you. While the plugin is enabled, `worktree-handoff` is 
 | `start` / `end` | Unwrap or bundle right now |
 | `unwrap [--force]` | Apply the bundle. `--force` applies it over local edits, after a backup ref |
 | `drop` | Delete this branch's bundle from the remote |
+| `switch BRANCH` | Park this branch's work in its bundle, switch, and bring back what BRANCH had parked. `switch -c NEW [START]` makes a new branch |
 
 Each new bundle replaces the last one, and the ref is deleted once your work is all committed. To clear everything the plugin left on your remote, `drop` each branch, or delete the refs yourself with `git push origin --delete refs/worktree-handoff/<branch>`. To remove the plugin, run `claude plugin uninstall worktree-handoff@worktree-handoff`.
 
@@ -149,6 +156,8 @@ Each new bundle replaces the last one, and the ref is deleted once your work is 
 Every decision gets a line in `.git/worktree-handoff/handoff.log` (JSON, one event per line), so you can see why it did what it did. Only the events that need attention reach Claude, like `handoff.unwrapped` and `handoff.conflict`, and each one carries an `agent` field telling Claude what to do about it.
 
 ## Development
+
+If you want to follow an edit through the code, open this repo in VS Code with the [CodeTour extension](https://marketplace.visualstudio.com/items?itemName=vsls-contrib.codetour). Run `CodeTour: Start Tour` and pick [Trace a handoff](.tours/trace-a-handoff.tour).
 
 Run the tests with `python -m unittest`. Most of them run 2 throwaway clones against a local bare repo standing in for GitHub, which covers the cases in the safety table. CI runs ruff, mypy and the tests on Linux, macOS and Windows.
 
