@@ -142,8 +142,10 @@ class Git:
         index.unlink(missing_ok=True)
         return tree, held
 
-    def staging_tree(self) -> tuple[str, list[dict]]:
-        """Build a filtered tree of the user's staged contents without changing the real index."""
+    def staging_tree(self, extra_held=()) -> tuple[str, list[dict]]:
+        """Build a filtered tree of the user's staged contents without changing the real index.
+        `extra_held` are paths the working-tree snapshot held back; they keep HEAD's version
+        here too, so the 2 snapshots never disagree about a held file."""
         index = self.state_dir / "staging-index"
         index.unlink(missing_ok=True)
         e = {"GIT_INDEX_FILE": str(index)}
@@ -159,7 +161,7 @@ class Git:
             raise GitError(msg)
         held = self._guard_index(e)
         held += self._ignored_additions(e, skip={h["path"] for h in held})
-        paths = [h["path"] for h in held]
+        paths = sorted({h["path"] for h in held} | set(extra_held))
         if paths:
             self.run("reset", "-q", "HEAD", "--", *paths, env=e)
         tree = self.run("write-tree", env=e)
@@ -170,6 +172,9 @@ class Git:
         """Return safe working-tree and index trees plus every path held by either guard."""
         index_tree, held = self.staging_tree()
         tree, worktree_held = self.worktree_tree(h["path"] for h in held)
+        more = {h["path"] for h in worktree_held} - {h["path"] for h in held}
+        if more:  # held only in the working copy: keep the staged copy out as well
+            index_tree, held = self.staging_tree(extra_held=more)
         by_path = {h["path"]: h for h in held}
         by_path.update({h["path"]: h for h in worktree_held})
         return tree, index_tree, list(by_path.values())

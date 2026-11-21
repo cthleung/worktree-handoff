@@ -31,6 +31,7 @@ Every printed line names its repo (`worktree-handoff [my-app]: ...`), and its `a
 | `skip.in_progress` | A merge, rebase or similar is in progress, so the handoff didn't run. It runs again once that's finished. |
 | `push.denied` (in the log) | The remote refused the push, so pushes pause for 24 hours. If the repo isn't the user's, suggest opting it out. |
 
+| `handoff.reapplied` | A pull clashed with this computer's own uncommitted work, so the work was lifted off, the pull ran, and the work went back on minus anything that's now committed. Tell the user which files. |
 | `handoff.unparked` | This branch's own parked work came back after a switch. Tell the user which files came back. |
 | `switch.refused` | Git wouldn't switch (usually a file the bundle leaves out, like a chat log, that differs on the other branch). Nothing moved and the work is back as it was. Show the user git's message. |
 | `switch.not_parked` | The work couldn't be bundled, so nothing was switched. Tell the user. |

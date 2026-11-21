@@ -222,13 +222,8 @@ def decide(g: Git, log, remember: bool = True) -> dict:
         plan["action"] = "already_identical"
         return plan
 
-    filtered_stage_paths = ({c["path"] for c in g.changes(head_tree, index_tree)}
-                            if index_tree is not None else set())
-    raw_stage_paths = {c["path"] for c in staged_changes}
     ours_stale = (bool(dirty) and state.get("sent_tree") == cur
-                  and (not preserve_staging or (
-                      state.get("sent_index_tree") == index_tree
-                      and raw_stage_paths == filtered_stage_paths)))
+                  and (not preserve_staging or state.get("sent_index_tree") == index_tree))
     if dirty and not ours_stale:
         plan["action"] = "conflict"
         plan["why"] = ("this computer has uncommitted edits that are not the bundle it last "
@@ -338,7 +333,8 @@ def _unwrap(g: Git, log, plan, force=False) -> int:
     remote, cur, head_tree = plan["remote"], plan["cur"], plan["head_tree"]
     log = log.bind(bundle=remote["commit"][:10], from_host=remote["host"])
 
-    has_staged_edits = g.config["preserve_staging"] and bool(plan["staged_paths"])
+    # staged changes the bundle carries; staged excludes and held files aren't touched
+    has_staged_edits = plan.get("index_tree") not in (None, head_tree)
     if cur != head_tree or has_staged_edits:
         backup = g.revert_to_head(cur)
         log.info("tree.reverted_to_head", backup_ref=backup,

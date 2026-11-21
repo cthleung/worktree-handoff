@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A README section on running a side task in its own folder.
 
 ### Changed
+- When a pull clashes with this computer's own uncommitted work and the tool lifts it off and puts it back, that's logged as `handoff.reapplied`, with its own `agent` text. Before, it said the files came over from the other computer.
 - Every printed line starts with the repo's folder name (`worktree-handoff [notes]: ...`), and each `agent` instruction starts with "This is the notes repo." Several repos can use the plugin at once, and a bundle from another computer has to say which repo it's for. The log file gets a `repo` field on every event too.
 - A bundle on another branch is announced once per folder, then stays quiet until it goes away and comes back. Before, a side task pushing heartbeat bundles came up at every chat start. `status` still shows them all without using the announcement up.
 

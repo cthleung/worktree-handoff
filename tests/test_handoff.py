@@ -408,6 +408,36 @@ class TwoComputers(unittest.TestCase):
         self.assertEqual(self.read("pc", "src/one.txt"), "one mac\n")
         self.assertIn("ignored.txt", self.git("mac", "diff", "--cached", "--name-only"))
 
+    def test_file_held_only_in_its_working_copy_stays_home_staged_too(self):
+        """A clean staged edit plus a token on an unstaged line: the file is held, so the
+        staged copy stays home as well, and the other computer's file isn't touched."""
+        self.preserve_staging("mac")
+        self.write("mac", "src/one.txt", "one, staged\n")
+        self.git("mac", "add", "src/one.txt")
+        self.write("mac", "src/one.txt", "one, staged\ntoken ghp_" + "a" * 36 + "\n")
+        self.write("mac", "src/two.txt", "two mac\n")
+        self.handoff("mac", "end")
+        self.assertEqual(self.git("mac", "show", f"{REF}^2:src/one.txt"), "one v1")
+        self.handoff("pc", "start")
+        self.assertEqual(self.read("pc", "src/one.txt"), "one v1\n")
+        self.assertNotIn("src/one.txt", self.git("pc", "diff", "--cached", "--name-only"))
+        self.assertEqual(self.read("pc", "src/two.txt"), "two mac\n")
+
+    def test_round_trip_with_a_staged_excluded_file(self):
+        self.seed_config({"preserve_staging": True, "exclude": ["chats"]}, [("chats/log.md", "chat v1\n")])
+        self.write("mac", "chats/log.md", "chat, staged\n")
+        self.git("mac", "add", "chats/log.md")
+        self.write("mac", "src/one.txt", "one mac\n")
+        self.handoff("mac", "end")
+        self.handoff("pc", "start")
+        self.write("pc", "src/two.txt", "two pc\n")
+        self.handoff("pc", "end")
+        ev = self.handoff("mac", "start")
+        self.assertNotIn("handoff.conflict", ev)
+        self.assertIn("handoff.unwrapped", ev)
+        self.assertEqual(self.read("mac", "src/two.txt"), "two pc\n")
+        self.assertIn("chats/log.md", self.git("mac", "diff", "--cached", "--name-only"))
+
     def test_flat_bundle_unwraps_after_staging_is_turned_on(self):
         self.write("mac", "src/one.txt", "one mac\n")
         self.git("mac", "add", "src/one.txt")
