@@ -18,6 +18,8 @@ The working tree gets staged into a separate index (`GIT_INDEX_FILE` pointing at
 
 The cost is that staging doesn't travel, so everything arrives unstaged on the other computer. It's in the README's limits, but honestly I've never missed it.
 
+[Issue #14](https://github.com/cthleung/worktree-handoff/issues/14) made the case for it anyway, so `preserve_staging` adds it as an opt-in. The bundle gets a second tree for the sender's index, built in its own scratch index from `git diff --cached`, and run through the same guards as the working-tree one: secrets, huge new files, and ignored files that got in with `git add -f`. It rides along as the bundle commit's second parent, so a bundle without it looks exactly like before. On the other side, the staged patch and the rest go on separately, so the split comes back, partial hunks included. A copy of the tool from before this can't read a bundle with 2 parents, which is why it's off by default and the README says to turn it on after every computer has updated.
+
 ## What a bundle is: a commit on top of HEAD
 
 The staged tree becomes a commit whose parent is the current `HEAD`, with a message naming the computer. The parent is what makes a 3-way apply possible later, since if the branch moved on while I was away, the receiving side still knows what the bundle was based on. The computer's name is how a machine tells its own bundle from the other one's, and that decides pretty much everything about what happens on the next start.
@@ -34,7 +36,7 @@ The receiving side applies the bundle's diff with `git apply`, and falls back to
 
 Real clashes get left as conflict markers and reported, because an automatic resolution would just be a guess. Files that already landed in the branch since the bundle was made get skipped, and the rest applies.
 
-There's 1 catch, and the README used to get it wrong. `git apply --3way` works through the real index, so on that path the files it merges get staged, and the tool then resets the index to `HEAD` so nothing's left staged. That reset would also unstage anything the person had staged by hand. In practice it can't bite much, because an unwrap only runs on a clean tree or on this computer's own last bundle, but it does mean "never touches `.git/index`" was only true of bundling. The README now says what's true for both directions, which is that nothing's ever left staged.
+There's 1 catch, and the README used to get it wrong. `git apply --3way` works through the real index, so on that path the files it merges get staged, and the tool then resets the index to `HEAD` so nothing's left staged. That reset would also unstage anything the person had staged by hand. In practice it can't bite much, because an unwrap only runs on a clean tree or on this computer's own last bundle, but it does mean "never touches `.git/index`" was only true of bundling. The README now says what's true for both directions, which is that nothing's ever left staged. With `preserve_staging` on, the merged index gets put back at the end instead, and if the merge conflicts, it's reset and the markers stay unstaged.
 
 ## When to stop and ask
 
@@ -48,7 +50,7 @@ There's an explicit way out, either `unwrap --force` (the local edits get backed
 
 ## Nothing's ever lost: backup refs
 
-Before anything replaces a working tree, the tree's committed to `refs/worktree-handoff-backup/<time>`. It's really cheap and invisible. But it means every destructive step in the tool can be undone with plain git.
+Before anything replaces a working tree, the tree's committed to `refs/worktree-handoff-backup/<time>`. With `preserve_staging` on, the backup also gets a second parent holding the index from before the reset, and the reset only unstages files that are in the bundle, so a staged excluded file stays staged. It's really cheap and invisible. But it means every destructive step in the tool can be undone with plain git.
 
 ## When it runs: 3 hooks with different jobs
 

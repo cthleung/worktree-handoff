@@ -31,6 +31,7 @@ Every printed line names its repo (`worktree-handoff [my-app]: ...`), and its `a
 | `skip.in_progress` | A merge, rebase or similar is in progress, so the handoff didn't run. It runs again once that's finished. |
 | `push.denied` (in the log) | The remote refused the push, so pushes pause for 24 hours. If the repo isn't the user's, suggest opting it out. |
 
+| `handoff.reapplied` | A pull clashed with this computer's own uncommitted work, so the work was lifted off, the pull ran, and the work went back on minus anything that's now committed. Tell the user which files. |
 | `handoff.unparked` | This branch's own parked work came back after a switch. Tell the user which files came back. |
 | `switch.refused` | Git wouldn't switch (usually a file the bundle leaves out, like a chat log, that differs on the other branch). Nothing moved and the work is back as it was. Show the user git's message. |
 | `switch.not_parked` | The work couldn't be bundled, so nothing was switched. Tell the user. |
@@ -60,9 +61,10 @@ The log is JSON lines in `.git/worktree-handoff/handoff.log`. `status` prints it
 All optional, in `.worktree-handoff.json` at the repo root:
 
 ```json
-{"enabled": true, "exclude": ["build-cache"], "remote": "origin", "tick_minutes": 20, "pull": true, "allow": [".env.example"]}
+{"enabled": true, "exclude": ["build-cache"], "remote": "origin", "tick_minutes": 20, "pull": true, "allow": [".env.example"], "preserve_staging": false}
 ```
 
+- **`preserve_staging`** carries the staged and unstaged split as well. When it's on, a `staging` field on `handoff.unwrapped` says whether the split came back (`restored`) or everything arrived unstaged (`flattened`); tell the user which.
 - **One repo, this computer only:** `git config worktree-handoff.enabled false` opts it out.
 - **Everywhere:** `WORKTREE_HANDOFF=off` in the environment turns it off.
 - **The secrets guard** keeps new files that look like keys or credentials out of the bundle, and also any file whose new lines contain a token. It logs `bundle.secrets_skipped`. Add a path to `allow` to let a file through.

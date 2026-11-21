@@ -14,7 +14,7 @@ CONFIG_FILE = ".worktree-handoff.json"
 
 
 DEFAULTS = {"enabled": True, "exclude": [], "remote": "origin", "tick_minutes": 20,
-            "pull": True, "allow": []}
+            "pull": True, "allow": [], "preserve_staging": False}
 
 
 NET_TIMEOUT = 60        # seconds for any one fetch, pull or push
@@ -38,7 +38,7 @@ LOUD_EVENTS = {
     "handoff.unwrapped", "handoff.conflict", "unwrap.conflict_markers", "unwrap.blocked",
     "unwrap.failed", "resume.own_bundle_tree_clean", "bundle.already_in_main",
     "tree.reverted_to_head", "bundle.other_branches", "git.failed", "skip.in_progress",
-    "handoff.unparked", "switch.refused", "switch.not_parked",
+    "handoff.unparked", "handoff.reapplied", "switch.refused", "switch.not_parked",
 }
 
 

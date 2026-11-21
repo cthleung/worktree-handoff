@@ -8,12 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Installed copies stopped updating: Claude Code's plugin loader rejects the manifest's `displayName` key (`claude plugin validate` only warned about it), so auto-update kept every computer on the first version. The key is gone.
 
 ### Added
+- `preserve_staging` (off by default, [#14](https://github.com/cthleung/worktree-handoff/issues/14)): bundles carry the staged and unstaged split, partial hunks included, as a second tree on the bundle commit. That tree goes through the same guards as the working-tree one, ignored files included. If the patches clash after the branch moved, everything still comes back, unstaged, and the log says so. A copy from before this can't read these bundles, so turn it on after every computer has updated.
 - `worktree-handoff switch BRANCH` (and `switch -c NEW [START]`): parks this branch's uncommitted work in its bundle, switches, and brings back what the new branch had parked. A refused switch puts everything back, files the bundle leaves out are never wiped, and work parked while offline is pushed the next time it comes back. A chat that opens on a clean tree holding its own parked bundle brings it back by itself.
 - The bundled skill tells the agent to switch branches through `switch`.
 - Tests for a second folder on its own branch (`git worktree add`), on the same computer as the main folder.
 - A README section on running a side task in its own folder.
 
 ### Changed
+- When a pull clashes with this computer's own uncommitted work and the tool lifts it off and puts it back, that's logged as `handoff.reapplied`, with its own `agent` text. Before, it said the files came over from the other computer.
 - Every printed line starts with the repo's folder name (`worktree-handoff [notes]: ...`), and each `agent` instruction starts with "This is the notes repo." Several repos can use the plugin at once, and a bundle from another computer has to say which repo it's for. The log file gets a `repo` field on every event too.
 - A bundle on another branch is announced once per folder, then stays quiet until it goes away and comes back. Before, a side task pushing heartbeat bundles came up at every chat start. `status` still shows them all without using the announcement up.
 
