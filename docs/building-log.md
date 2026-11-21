@@ -136,3 +136,28 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **Once per folder:** The record lives in each folder's own git directory, so a brand-new side folder still hears about `main`'s bundle from the other computer, once.
 
 **How I know it works:** All 46 tests pass locally, and so do ruff and mypy at the versions CI pins. The side-folder test also checks that the main folder next door, and `main`'s bundle, stay as they were.
+
+## 13. Switching branches without carrying work across
+
+**What was wrong:** I keep 1 folder per computer, and the PC's folder moves between `main` and a side branch for a long autonomous task. Git's answer to uncommitted changes at a switch is to carry them across or refuse, and VS Code's answer is a stash that only lives on that one computer. Either way, unfinished work on one branch could end up on the other, and the handoff would then bundle it under the wrong branch.
+
+**What I did:** A new command, `worktree-handoff switch BRANCH` (plus `switch -c NEW [START]`). It bundles this branch's work and pushes it like any handoff, checks the bundle holds exactly what's in the tree, puts those files back to the last commit, and switches. Then it runs the normal start on the new branch, where a new "unpark" case brings this computer's own parked bundle back. If git refuses the switch, the parked work goes straight back in. The bundled skill now tells the agent to use `switch` whenever I ask it to change branches.
+
+**Decisions worth a note:**
+- **A command, since git has no hook for this:** The only checkout hook git has runs after the switch, when the changes have already been carried or refused. So the editor's branch picker still works the old way, and that's in the README.
+- **Only reset what's in the bundle:** Excluded paths and held-back secrets never go into a bundle, so resetting them would lose them. The revert works from the bundle's own tree, which leaves those files where they are, and if one of them blocks the switch, git refuses and everything goes back.
+- **Parked offline still counts:** A bundle that couldn't be pushed gets dropped from the local refs by the next fetch's prune. The state remembers the commit, so the ref comes back, the work gets unparked, and the push goes out late.
+
+**How I know it works:** 7 new end-to-end tests cover a round trip across 2 branches, files the bundle leaves out, a refused switch, parked work reaching the other computer, a new chat after a switch done by hand, parking offline, and making a new branch. All 53 tests pass locally, and so do ruff and mypy at the versions CI pins.
+
+## 16. Naming the repo, and the key that stopped every update
+
+**What was wrong:** I use the plugin in several repos now, and a startup line only said which branch a bundle was for, so "work came over on `main`" could mean any of them. While checking that, I found out the installed copy on my Mac was still the very first version. Claude Code's plugin loader rejects the `displayName` key in the manifest, and it logged that error on every start, while `claude plugin validate` only ever warned about it. So auto-update had quietly kept both computers on the first release, #12 included.
+
+**What I did:** The `displayName` key is gone. Every printed line now starts with the repo's folder name (`worktree-handoff [notes]: ...`), every `agent` instruction opens with "This is the notes repo.", and every log event carries a `repo` field. The skill tells the agent to name the repo when it reports anything, and the README's example is a fresh real run.
+
+**Decisions worth a note:**
+- **The folder name, not the remote's name:** it's what the editor shows, and it's what I'd say out loud. Two clones of one repo in different folders get told apart too.
+- **Added at the logger:** the prefix and the agent sentence both come from the logger's context, so every event gets them without touching each message.
+
+**How I know it works:** A new test checks the prefix, the agent sentence and the log field. All 47 tests pass locally, plus ruff, mypy and `claude plugin validate`, and the debug log is the place to check that the manifest error stops once this is installed.

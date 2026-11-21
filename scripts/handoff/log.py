@@ -13,7 +13,10 @@ class Log:
     """structlog's shape (bind / info / warning / error) without needing structlog. Every
     event goes to the log file as one JSON line. stdout gets the loud events (or all of
     them when verbose) as readable key=value lines. When structlog is installed it renders
-    the stdout lines; the file format is the same either way."""
+    the stdout lines; the file format is the same either way.
+
+    Several repos can use the plugin at once, so a printed line starts with the repo's
+    folder name, and an `agent` instruction says which repo it's about."""
 
     def __init__(self, path: Path, verbose: bool, context=None):
         self.path, self.verbose, self.context = path, verbose, dict(context or {})
@@ -27,6 +30,9 @@ class Log:
         return Log(self.path, self.verbose, {**self.context, **kw})
 
     def _emit(self, level, event, kw):
+        repo = self.context.get("repo")
+        if repo and "agent" in kw:
+            kw = {**kw, "agent": f"This is the {repo} repo. {kw['agent']}"}
         rec = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "level": level,
                "event": event, **self.context, **kw}
         try:
@@ -43,7 +49,8 @@ class Log:
             rest = " ".join(f"{k}={_short(v)}" for k, v in rec.items()
                             if k not in ("timestamp", "level", "event"))
             line = f"{rec['timestamp']} [{level:<7}] {event:<30} {rest}".rstrip()
-        print(f"worktree-handoff: {line}", flush=True)
+        prefix = f"worktree-handoff [{repo}]:" if repo else "worktree-handoff:"
+        print(f"{prefix} {line}", flush=True)
 
     def info(self, event, **kw): self._emit("info", event, kw)
     def warning(self, event, **kw): self._emit("warning", event, kw)

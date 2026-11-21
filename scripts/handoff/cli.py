@@ -12,6 +12,9 @@ scratch index, so "what changed since my last commit" in your editor stays as it
   worktree-handoff unwrap [--force]   apply the bundle now (--force: over local edits,
                            after a backup ref)
   worktree-handoff drop    delete this branch's bundle from the remote
+  worktree-handoff switch BRANCH   park this branch's uncommitted work in its bundle,
+                           switch, and bring back what BRANCH had parked
+  worktree-handoff switch -c NEW [START]   the same, onto a new branch
 
 How a bundle is made: a scratch index (never .git/index) gets `git add -A`, which keeps
 .gitignore'd files out. The secrets guard then drops new files that look like keys or
@@ -46,13 +49,13 @@ import signal
 import sys
 from pathlib import Path
 
-from .commands import cmd_drop, cmd_end, cmd_start, cmd_status, cmd_unwrap
+from .commands import cmd_drop, cmd_end, cmd_start, cmd_status, cmd_switch, cmd_unwrap
 from .config import CONFIG_FILE, env
 from .gitops import Git, GitError, find_root
 from .host import host_name
 from .log import Log
 
-COMMANDS = ("end", "tick", "start", "status", "unwrap", "drop")
+COMMANDS = ("end", "tick", "start", "status", "unwrap", "drop", "switch")
 
 
 def main(argv) -> int:
@@ -63,7 +66,7 @@ def main(argv) -> int:
     if command not in COMMANDS:
         print(f"worktree-handoff: unknown command {command!r}; try --help", file=sys.stderr)
         return 2
-    by_hand = command in ("status", "unwrap", "drop")
+    by_hand = command in ("status", "unwrap", "drop", "switch")
     if os.environ.get("WORKTREE_HANDOFF", "").lower() in ("off", "0", "false"):
         if by_hand:
             print("worktree-handoff: turned off by WORKTREE_HANDOFF=off")
@@ -88,7 +91,7 @@ def main(argv) -> int:
 
     log_path = Path(env("LOG") or g.state_dir / "handoff.log")
     log = Log(log_path, verbose=by_hand or bool(env("VERBOSE")),
-              context={"command": command, "host": host_name(), "pid": os.getpid()})
+              context={"repo": root.name, "command": command, "host": host_name(), "pid": os.getpid()})
 
     if not g.branch():
         log.info("skip.detached", detail="HEAD is detached, so there's no branch to hand off")
@@ -122,7 +125,7 @@ def main(argv) -> int:
         log.info("lock.busy", detail="another handoff ran past the wait; this one steps aside")
         return 0
     try:
-        log.info("run.begin", repo=str(g.root), branch=g.branch())
+        log.info("run.begin", path=str(g.root), branch=g.branch())
         if command in ("end", "tick"):
             return cmd_end(g, log)
         if command == "start":
@@ -131,6 +134,8 @@ def main(argv) -> int:
             return cmd_status(g, log)
         if command == "unwrap":
             return cmd_unwrap(g, log, force="--force" in flags)
+        if command == "switch":
+            return cmd_switch(g, log, flags)
         return cmd_drop(g, log)
     except GitError as e:
         log.error("git.failed", error=str(e), agent="Tell the user; nothing else was changed.")

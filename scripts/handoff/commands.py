@@ -1,4 +1,4 @@
-"""What each command does: bundle (end, tick), unwrap (start), status, unwrap, drop."""
+"""What each command does: bundle (end, tick), unwrap (start), switch, status, unwrap, drop."""
 
 from __future__ import annotations
 
@@ -190,12 +190,21 @@ def decide(g: Git, log, remember: bool = True) -> dict:
         log.info("tree.secrets_held", files=held)
 
     remote = _fetch(g, log, remember)
+    parked = state.get("parked")
+    if not remote and not dirty and parked and state.get("sent") == parked and g.rev(parked):
+        # parked while offline: the bundle never reached the remote, so the fetch's --prune
+        # dropped the local ref. The commit is still here; put the ref back.
+        g.run("update-ref", g.ref, parked)
+        remote = g.read_bundle(g.ref)
     plan["remote"] = remote
     if not remote:
         plan["action"] = "push_ours" if state.get("sent") and not state.get("pushed") else "pull_only"
         return plan
 
     if remote["host"] == me:
+        if not dirty and parked == remote["commit"]:
+            plan["action"] = "unpark"
+            return plan
         plan["action"] = "resume_own" if dirty else "own_bundle_but_clean"
         if not state.get("pushed") and state.get("sent") and state["sent"] != remote["commit"]:
             plan["action"] = "push_ours"
@@ -269,6 +278,14 @@ def cmd_start(g: Git, log) -> int:
         _apply_bundle(g, log, remote, note="re-applying this computer's own bundle after the pull")
         return 0
 
+    if action == "unpark":
+        if not state.get("pushed"):
+            ok = push(g, log, f"{g.ref}:{g.ref}", "bundle")
+            g.save_state(pushed=ok)
+        _pull(g, log)
+        _unpark(g, log, remote, note="this branch's work, parked by `worktree-handoff switch`")
+        return 0
+
     if action == "own_bundle_but_clean":
         log.warning("resume.own_bundle_tree_clean", bundle=remote["commit"][:10],
                     bundled_at=remote["when"],
@@ -298,12 +315,10 @@ def cmd_start(g: Git, log) -> int:
         log.error("handoff.conflict", why=plan["why"], local=plan["dirty"],
                   bundle=remote["commit"][:10], from_host=remote["host"],
                   bundled_at=remote["when"], bundle_files=summarize(bundle_changes), overlap=overlap,
-                  staging="skipped (local conflict)",
                   agent="Nothing was changed. Tell the user before editing: show them the "
                         "local files, the bundle's files and the overlap, and offer "
                         "`worktree-handoff unwrap --force` (backs up the local tree to "
-                        f"{BACKUP_PREFIX}<time> first) or keeping local and `worktree-handoff drop`. "
-                        "Staging was not restored.")
+                        f"{BACKUP_PREFIX}<time> first) or keeping local and `worktree-handoff drop`.")
         return 0
 
     return _unwrap(g, log, plan)
@@ -360,7 +375,14 @@ def _apply_flattened_staging(g: Git, remote: dict, already: list[str],
     return not failed, "\n".join(errors), sorted(failed)
 
 
-def _apply_bundle(g: Git, log, remote, note="") -> int:
+UNWRAPPED_AGENT = ("These files are now uncommitted edits in the working tree, carried over "
+                   "from the other computer. Tell the user which files came over.")
+UNPARKED_AGENT = ("This branch's own parked work is back in the working tree as uncommitted "
+                  "edits. Tell the user which files came back.")
+
+
+def _apply_bundle(g: Git, log, remote, note="", event="handoff.unwrapped",
+                  agent=UNWRAPPED_AGENT) -> int:
     """Apply a bundle's changes onto a working tree that is clean at HEAD. Files the
     bundle has in the same state as HEAD already (work that got committed in the
     meantime) are left out of the patch. If the branch moved on since the bundle's parent
@@ -404,13 +426,11 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
             if moved:
                 g.run("reset", "-q")
             g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
-            log.info("handoff.unwrapped", how=how, note=note, bundled_at=remote["when"],
+            log.info(event, how=how, note=note, bundled_at=remote["when"],
                      staging="flattened (index patch did not apply)", **files,
                      staged_files=summarize(staged_todo), skipped_already_committed=already,
                      **g.shortstat(remote["parent"], remote["tree"]),
-                     agent="These files are now uncommitted edits in the working tree. "
-                           "Staging could not be restored, so all edits are unstaged. Tell the "
-                           "user which files came over.")
+                     agent=agent + " Their staging couldn't be restored, so every edit is unstaged.")
             return 0
 
         staged_tree = g.run("write-tree")
@@ -438,22 +458,17 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
 
         g.run("read-tree", staged_tree)
         g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
-        log.info("handoff.unwrapped", how=how, note=note, bundled_at=remote["when"],
+        log.info(event, how=how, note=note, bundled_at=remote["when"],
                  staging="restored", staged_files=summarize(staged_todo), **files,
                  skipped_already_committed=already, **g.shortstat(remote["parent"], remote["tree"]),
-                 agent="These files are now uncommitted edits in the working tree, carried over "
-                       "from the other computer. Their staged and unstaged split was restored. "
-                       "Tell the user which files came over.")
+                 agent=agent + " The staged and unstaged split came back too.")
         return 0
 
     if not todo:
         g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
         log.info("bundle.already_in_main", bundled_at=remote["when"], files=already,
-                 staging="skipped (already committed)",
                  detail="every file in the bundle already matches HEAD, so there's nothing "
-                        "uncommitted to bring back",
-                 agent="The bundle's changes are already in HEAD, so nothing was restored. "
-                       "Staging was skipped.")
+                        "uncommitted to bring back")
         return 0
 
     patch = g.patch(remote["parent"], remote["tree"], exclude=already)
@@ -461,8 +476,7 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
         how = "plain apply (bundle parent is HEAD)"
         ok, msg = g.apply(patch, "--check")
         if not ok:
-            log.error("unwrap.blocked", error=msg, staging="skipped",
-                      agent="Nothing was changed. Staging was not restored; tell the user.")
+            log.error("unwrap.blocked", error=msg, agent="Nothing was changed. Tell the user.")
             return 0
         ok, msg = g.apply(patch)
     else:
@@ -471,28 +485,96 @@ def _apply_bundle(g: Git, log, remote, note="") -> int:
         if not ok:
             unmerged = g.run("diff", "--name-only", "--diff-filter=U").splitlines()
             g.run("reset", "-q")  # --3way stages what it merged; reset to HEAD so nothing's left staged
-            g.save_state(applied=remote["commit"], sent_tree=None)
+            g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
             log.error("unwrap.conflict_markers", how=how, note=note,
                       error=msg.splitlines()[-1] if msg else "", files_with_markers=unmerged,
-                      skipped_already_committed=already, staging="flattened", **files,
+                      skipped_already_committed=already, **files,
                       agent="The bundle is in the tree but these files have <<<<<<< markers. "
-                            "Staging was flattened. Tell the user and resolve them together "
-                            "before other edits.")
+                            "Tell the user and resolve them together before other edits.")
             return 0
         g.run("reset", "-q")
     if not ok:
-        log.error("unwrap.failed", how=how, error=msg, staging="skipped",
-                  agent="Nothing was changed. Staging was not restored; tell the user.")
+        log.error("unwrap.failed", how=how, error=msg, agent="Tell the user.")
         return 0
 
     g.save_state(applied=remote["commit"], sent_tree=None, sent_index_tree=None)
-    log.info("handoff.unwrapped", how=how, note=note, bundled_at=remote["when"], **files,
+    log.info(event, how=how, note=note, bundled_at=remote["when"], **files,
              skipped_already_committed=already, **g.shortstat(remote["parent"], remote["tree"]),
-             staging="flattened",
-             agent="These files are now uncommitted edits in the working tree, carried over "
-                   "from the other computer. All edits are unstaged. Tell the user which files "
-                   "came over.")
+             staging="flattened", agent=agent)
     return 0
+
+
+def _unpark(g: Git, log, bundle, note):
+    """Bring this computer's own parked bundle back into a tree that's clean at HEAD. When
+    it comes back whole, the state records it as our last sent bundle, so the next `end`
+    doesn't push the same thing again."""
+    pushed = g.load_state().get("pushed", False)
+    _apply_bundle(g, log, bundle, note=note, event="handoff.unparked", agent=UNPARKED_AGENT)
+    if g.config["preserve_staging"]:
+        back, back_index, _ = g.worktree_snapshot()
+    else:
+        (back, _), back_index = g.worktree_tree(), None
+    if back == bundle["tree"] and (back_index is None or back_index == bundle.get("index_tree")):
+        g.save_state(parked=None, applied=None, sent=bundle["commit"], sent_tree=bundle["tree"],
+                     sent_index_tree=back_index, pushed=pushed)
+    else:
+        g.save_state(parked=None)
+
+
+def cmd_switch(g: Git, log, args: list[str]) -> int:
+    """Switch branches without carrying unfinished work across. This branch's uncommitted
+    work is parked in its own bundle (pushed, so the other computer can pick it up too),
+    the files that went into the bundle go back to HEAD, git switches, and the new branch
+    gets back whatever it had parked, or whatever the other computer left on it. Files the
+    bundle leaves out (excludes, held-back secrets, huge new files) stay where they are, so
+    nothing that isn't safe in a bundle gets wiped. If git refuses the switch, the parked
+    work goes straight back."""
+    create = bool(args) and args[0] in ("-c", "--create")
+    names = args[1:] if create else args
+    if not names or len(names) > (2 if create else 1):
+        log.error("switch.usage", detail="worktree-handoff switch BRANCH, or switch -c NEW [START]")
+        return 2
+    target, start_point = names[0], (names[1] if len(names) > 1 else None)
+    here = g.branch()
+    if target == here:
+        log.info("switch.already_there", branch=here)
+        return 0
+
+    head_tree = g.head_tree()
+    cur, _ = g.worktree_tree()
+    parked = None
+    if cur != head_tree:
+        cmd_end(g, log)
+        bundle = g.read_bundle(g.ref)
+        if not bundle or bundle["tree"] != cur:
+            log.error("switch.not_parked", branch=here,
+                      detail="the work here couldn't be bundled, so nothing was switched",
+                      agent="Tell the user; nothing was changed.")
+            return 0
+        g.save_state(parked=bundle["commit"])
+        backup = g.revert_to_head(cur)
+        parked = bundle
+        log.info("switch.parked", branch=here, bundle=bundle["commit"][:10], backup_ref=backup,
+                 pushed=g.load_state().get("pushed", False), **summarize(g.changes(head_tree, cur)))
+
+    if not create and not g.rev(f"refs/heads/{target}"):
+        # a branch that's only on the remote needs a fetch before git can check it out
+        g.try_run("fetch", "-q", g.remote, timeout=NET_TIMEOUT)
+    cmd = ["switch", "-q", "-c", target, *([start_point] if start_point else [])] if create \
+        else ["switch", "-q", target]
+    ok, msg = g.try_run(*cmd)
+    if not ok:
+        if parked:
+            _unpark(g, log, parked, note="putting this branch's work back after git refused the switch")
+        log.error("switch.refused", from_branch=here, to_branch=target,
+                  error=msg.splitlines()[-1] if msg else "",
+                  detail="git wouldn't switch, so this branch's work is back as it was",
+                  agent="Nothing moved. Tell the user what git said.")
+        return 0
+
+    log.info("switch.done", from_branch=here, to_branch=g.branch(),
+             parked=parked["commit"][:10] if parked else None)
+    return cmd_start(g, log)
 
 
 def cmd_unwrap(g: Git, log, force: bool) -> int:
