@@ -177,7 +177,9 @@ def decide(g: Git, log, remember: bool = True) -> dict:
     dirty = g.changes(head_tree, cur)
     if index_tree is not None:
         by_path = {c["path"]: c for c in dirty}
-        for change in g.changes(head_tree, index_tree) + staged_changes:
+        # only what the staged snapshot carries counts; staged excludes and held files
+        # don't make the tree dirty, the same as their working copies with staging off
+        for change in g.changes(head_tree, index_tree):
             by_path.setdefault(change["path"], change)
         dirty = list(by_path.values())
     log = log.bind(head=head[:10], branch=g.branch())
@@ -268,6 +270,13 @@ def cmd_start(g: Git, log) -> int:
                  "tree still holds it; nothing to unwrap", **plan["dirty"])
         if _pull(g, log) or state.get("sent_tree") != cur:
             return 0
+        if g.config["preserve_staging"] and state.get("sent_index_tree") != plan["index_tree"]:
+            # the files match our last bundle but the staging changed since; bundle it again
+            # first, or lifting the old bundle off and back on would bring back old staging
+            cmd_end(g, log)
+            remote = g.read_bundle(g.ref)
+            if not remote or remote["tree"] != cur:
+                return 0
         # The pull refused because our own uncommitted files overlap what the branch now
         # has (the other computer committed our bundle). The tree is exactly our bundle,
         # so it's safe to lift it off, pull, and put back only what the branch lacks.
@@ -275,7 +284,8 @@ def cmd_start(g: Git, log) -> int:
         log.info("tree.reverted_to_head", backup_ref=backup,
                  reason="our own bundle overlaps what the branch now has; lifting it off to pull")
         _pull(g, log)
-        _apply_bundle(g, log, remote, note="re-applying this computer's own bundle after the pull")
+        _apply_bundle(g, log, remote, note="re-applying this computer's own bundle after the pull",
+                      event="handoff.reapplied", agent=REAPPLIED_AGENT)
         return 0
 
     if action == "unpark":
@@ -377,6 +387,8 @@ def _apply_flattened_staging(g: Git, remote: dict, already: list[str],
 
 UNWRAPPED_AGENT = ("These files are now uncommitted edits in the working tree, carried over "
                    "from the other computer. Tell the user which files came over.")
+REAPPLIED_AGENT = ("This computer's own uncommitted work went back on after the pull, and the "
+                   "files already committed upstream were left out. Tell the user which files.")
 UNPARKED_AGENT = ("This branch's own parked work is back in the working tree as uncommitted "
                   "edits. Tell the user which files came back.")
 

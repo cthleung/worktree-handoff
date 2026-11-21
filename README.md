@@ -71,7 +71,7 @@ Install it on each computer, with the same remote on both. You need `git` and Py
                                                                     = uncommitted edits
 ```
 
-When a chat closes, the plugin stages your working tree in a scratch index (so bundling never touches your real one), turns that tree into a commit on top of `HEAD` with the computer's name in the message, and force-pushes the commit to `refs/worktree-handoff/<branch>`. With `preserve_staging: true`, a second filtered tree records the staged contents separately. The ref sits outside `refs/heads`, so it never shows up as a branch and a normal `git fetch` skips it.
+When a chat closes, the plugin stages your working tree in a scratch index (so bundling never touches your real one), turns that tree into a commit on top of `HEAD` with the computer's name in the message, and force-pushes the commit to `refs/worktree-handoff/<branch>`. With `preserve_staging` on, a second tree records what's staged, filtered the same way. The ref sits outside `refs/heads`, so it never shows up as a branch and a normal `git fetch` skips it.
 
 When a chat opens on the other computer, the plugin fetches the ref, checks that the bundle came from somewhere else and hasn't been applied yet, pulls your branch and applies the bundle's diff with `git apply`. If the branch has moved on since, it uses `--3way` and leaves any real clash as conflict markers for you to sort out.
 
@@ -100,7 +100,7 @@ The smaller guards (a lock that clears when its owner dies, a 24-hour pause on p
 ## Limits
 
 - The heartbeat only runs after Claude replies. If a laptop dies mid-task, you lose what changed since the last bundle, which is 20 minutes at most while Claude's been replying, and longer if you've been hand-editing with no replies.
-- Bundles carry file contents, not file modes. Staging stays behind by default; `preserve_staging: true` opts in to restoring it when the index and working-tree patches apply cleanly. If branch movement conflicts, contents remain recoverable as unstaged edits and the handoff reports that staging was flattened.
+- Bundles carry file contents. File modes stay behind, and so does staging unless `preserve_staging` is on, so everything shows up unstaged. With it on, the staged and unstaged split comes back too, partial hunks included. If the branch moved and the patches clash, the files still come back as unstaged edits, and the log says the staging was flattened.
 - The secrets check catches the common shapes of keys and tokens. Keep real secrets in `.gitignore`.
 
 ## A side task on another branch
@@ -137,7 +137,7 @@ Everything is optional. Settings go in `.worktree-handoff.json` at the repo root
 | `tick_minutes` | `20` | The shortest gap between heartbeat bundles |
 | `pull` | `true` | Runs `git pull --ff-only` before unwrapping |
 | `allow` | `[]` | Files the secrets check should let through |
-| `preserve_staging` | `false` | Carry staged/unstaged selection, including partial hunks; branch conflicts fall back to unstaged edits |
+| `preserve_staging` | `false` | Carries the staged and unstaged split too, partial hunks included. Turn it on once every computer has this version, since an older copy can't read these bundles |
 
 ## Commands
 

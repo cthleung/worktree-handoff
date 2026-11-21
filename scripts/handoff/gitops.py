@@ -127,14 +127,15 @@ class Git:
         self.run("read-tree", "HEAD", env=e)
         self.run("add", "-A", "--", ".", *self.excludes, env=e)
         held = self._guard(e)
-        held_paths = set(held_paths) | {h["path"] for h in held}
         new = [h["path"] for h in held if h["status"] == "A"]
         mods = [h["path"] for h in held if h["status"] == "M"]
-        head_paths = set(self.blobs(self.head_tree()))
-        new += [p for p in held_paths if p not in new and p not in head_paths]
-        mods += [p for p in held_paths if p not in mods and p in head_paths]
+        extra = set(held_paths) - {h["path"] for h in held}
+        if extra:  # held from the staged snapshot; keep them out of this one too
+            head_paths = set(self.blobs(self.head_tree()))
+            new += [p for p in extra if p not in head_paths]
+            mods += [p for p in extra if p in head_paths]
         if new:
-            self.run("rm", "--cached", "-q", "--", *new, env=e)
+            self.run("rm", "--cached", "-q", "--ignore-unmatch", "--", *new, env=e)
         if mods:  # the bundle keeps the committed version of these
             self.run("reset", "-q", "HEAD", "--", *mods, env=e)
         tree = self.run("write-tree", env=e)
@@ -157,6 +158,7 @@ class Git:
         if not ok:
             raise GitError(msg)
         held = self._guard_index(e)
+        held += self._ignored_additions(e, skip={h["path"] for h in held})
         paths = [h["path"] for h in held]
         if paths:
             self.run("reset", "-q", "HEAD", "--", *paths, env=e)
@@ -171,6 +173,20 @@ class Git:
         by_path = {h["path"]: h for h in held}
         by_path.update({h["path"]: h for h in worktree_held})
         return tree, index_tree, list(by_path.values())
+
+    def _ignored_additions(self, e, skip=()) -> list[dict]:
+        """New staged files that .gitignore covers (they got in with `git add -f`). The
+        working-tree snapshot never carries them, so the staged one doesn't either."""
+        out = self.run("diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD", env=e)
+        parts = out.split("\0")
+        added = [p for s, p in zip(parts[0::2], parts[1::2], strict=False)
+                 if s[:1] == "A" and p not in skip]
+        if not added:
+            return []
+        r = subprocess.run(["git", "check-ignore", "--no-index", "-z", "--stdin"], cwd=self.root,
+                           input="\0".join(added) + "\0", capture_output=True, text=True)
+        return [{"path": p, "status": "A", "why": "ignored by .gitignore"}
+                for p in r.stdout.split("\0") if p]
 
     def _guard_index(self, e) -> list[dict]:
         """Guard staged blobs, rather than reading the possibly different working copy."""
@@ -322,7 +338,13 @@ class Git:
         name = f"{BACKUP_PREFIX}{stamp}"
         self.run("update-ref", name, backup)
         if index_commit:
-            self.run("reset", "-q", "HEAD")
+            # unstage only what the bundle holds; staged excludes and held files stay staged
+            staged_tree, _ = self.staging_tree()
+            paths = sorted({c["path"] for c in self.changes(self.head_tree(), cur_tree)}
+                           | {c["path"] for c in self.changes(self.head_tree(), staged_tree)})
+            if paths:
+                self.run("reset", "-q", "HEAD", "--pathspec-from-file=-", "--pathspec-file-nul",
+                         input="\0".join(paths) + "\0")
         ok, msg = self.apply(self.patch(cur_tree, self.head_tree()))
         if not ok:
             raise GitError(f"could not revert the tree to HEAD: {msg}")

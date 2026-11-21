@@ -161,3 +161,18 @@ One rule sits over all of it. I run this plugin on my own 2 computers every day,
 - **Added at the logger:** the prefix and the agent sentence both come from the logger's context, so every event gets them without touching each message.
 
 **How I know it works:** A new test checks the prefix, the agent sentence and the log field. All 47 tests pass locally, plus ruff, mypy and `claude plugin validate`, and the debug log is the place to check that the manifest error stops once this is installed.
+
+## 15. Carrying the staging too, as an opt-in
+
+**What was wrong:** A handoff carried file contents and flattened the index, so if I'd staged a reviewed subset on one computer, partial hunks and all, it all came back unstaged on the other one. I wrote that up as [issue #14](https://github.com/cthleung/worktree-handoff/issues/14) and gave it to the Copilot coding agent, which opened this PR.
+
+**What I did:** The agent's version adds `preserve_staging`, off by default. The bundle gets a second tree for the sender's index, built in its own scratch index and guarded like the working-tree one, and it rides along as the bundle commit's second parent. On the other side, the staged patch and the rest go on separately. It was written before #13 and #16, so I merged `main` in and routed its new success lines through #13's event and agent settings, which keeps an unpark announcing itself as an unpark. Before calling it safe, I wrote tests for the ways it could go wrong with the setting on, and 3 of them failed:
+- **Restaging rolled back:** the files still matched my last bundle, but the staging had changed since. When a pull clashed, lifting the old bundle off and back on brought the old staging back. Now it bundles again first.
+- **`switch` unstaged things it doesn't carry:** reverting reset the whole real index, so a staged chat log (an excluded path) came out unstaged. The reset now only touches files in the bundle, and a staged excluded file no longer counts as dirty, the same as its working copy with the setting off.
+- **A force-added ignored file travelled:** `git add -f` put it in the staged tree, and the working-tree snapshot then crashed trying to drop a file it never had. Ignored additions are held back from both now.
+
+**Decisions worth a note:**
+- **Off by default, with the old wording kept:** every message on the setting-off path reads the way it did before, so the README's real-run example and the tour's step 15 still match, and the 66 tests from before pass untouched.
+- **Turn it on after both computers update:** a copy of the tool from before this reads a bundle's 2 parents as 1, fails, and changes nothing. The README says to switch it on once every computer has this version.
+
+**How I know it works:** 7 more tests on top of the agent's: the receiver's index tree is the sender's exactly, restaging, a `switch` round trip with a staged excluded file, a refused `switch` with a partial stage, the force-added ignored file, and the setting flipped between bundling and unwrapping in both directions. All 73 pass locally, plus ruff and mypy at the pinned versions.
